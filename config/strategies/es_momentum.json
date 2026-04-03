@@ -1,0 +1,28 @@
+{
+  "name": "ES Momentum Pullback",
+  "instrument": "ES",
+  "session_start": "09:30",
+  "session_end": "11:30",
+  "timezone": "America/New_York",
+  "timeframe": "5m",
+  "setup_type": "momentum_pullback",
+  "entry_rules": {
+    "trend_required": true,
+    "trend_timeframe": "15min",
+    "entry_pattern": "pullback_to_ema",
+    "ema_period": 8,
+    "volume_confirmation": true
+  },
+  "risk_rules": {
+    "max_daily_trades": 3,
+    "max_daily_loss_dollars": 150,
+    "max_loss_per_trade_dollars": 75,
+    "stop_after_consecutive_losses": 2,
+    "daily_profit_target_dollars": 300
+  },
+  "exit_rules": {
+    "scale_out_at_1r": true,
+    "scale_out_percentage": 50,
+    "final_target_rr": 2.0
+  }
+}

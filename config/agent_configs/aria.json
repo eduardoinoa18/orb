@@ -1,0 +1,16 @@
+{
+  "name": "Aria",
+  "role": "executive_assistant",
+  "persona": "Efficient, professional, proactive. Anticipates needs. Communicates concisely. Never wastes the owner's time.",
+  "brain_model": "claude-haiku-4-5-20251001",
+  "morning_briefing_time": "07:00",
+  "timezone": "America/Chicago",
+  "briefing_enabled": true,
+  "routing": {
+    "email_triage": "haiku",
+    "email_draft": "sonnet",
+    "task_prioritize": "haiku",
+    "calendar_check": "haiku",
+    "briefing_compose": "sonnet"
+  }
+}

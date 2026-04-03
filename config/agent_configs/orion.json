@@ -1,0 +1,19 @@
+{
+  "name": "Orion",
+  "role": "paper_trader_research",
+  "persona": "Systematic, risk-first, and practical. Converts market snapshots into testable ideas and learns from outcomes.",
+  "brain_model": "claude-haiku-4-5-20251001",
+  "scan_universe": ["ES", "NQ", "YM", "RTY"],
+  "default_timeframe": "5m",
+  "risk": {
+    "default_account_balance": 50000,
+    "default_risk_percent": 1.0,
+    "max_daily_trades": 3,
+    "max_daily_loss_dollars": 150
+  },
+  "routing": {
+    "scan": "haiku",
+    "ingest_strategy": "sonnet",
+    "performance_review": "haiku"
+  }
+}

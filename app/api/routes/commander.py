@@ -1,0 +1,480 @@
+"""Commander API routes for owner-level orchestration."""
+
+from __future__ import annotations
+
+import asyncio
+from datetime import datetime, timezone
+from typing import Any
+
+from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel, Field
+
+from agents.commander import CommanderBrain
+from app.database.connection import DatabaseConnectionError, SupabaseService
+from app.security.action_tokens import create_action_token, verify_and_consume_action_token
+from integrations.resend_client import send_resend_email
+from integrations.twilio_client import send_sms
+from integrations.ws_broadcaster import dispatch_agent_action
+
+router = APIRouter(prefix="/commander", tags=["commander"])
+commander_brain = CommanderBrain()
+
+_MEMORY_CHAT_SESSIONS: dict[str, list[dict[str, Any]]] = {}
+_MEMORY_CONFIG: dict[str, dict[str, Any]] = {}
+_MEMORY_MOBILE_PREFS: dict[str, dict[str, Any]] = {}
+_CHAT_SESSIONS_DB_AVAILABLE: bool = True
+
+
+class CommanderMessagePayload(BaseModel):
+    """Owner message payload for Commander."""
+
+    message: str = Field(min_length=2)
+    owner_id: str = Field(min_length=2)
+
+
+class CommanderConfigurePayload(BaseModel):
+    """Owner customization payload for Commander."""
+
+    owner_id: str = Field(min_length=2)
+    commander_name: str | None = None
+    personality_style: str | None = None
+    briefing_time: str | None = None
+    review_day: str | None = None
+    language: str | None = None
+    communication_style: str | None = None
+    proactivity_level: int | None = None
+    morning_briefing_enabled: bool | None = None
+    weekly_review_enabled: bool | None = None
+
+
+class MobilePreferencesPayload(BaseModel):
+    owner_id: str = Field(min_length=2)
+    alerts_enabled: bool = True
+    approvals_enabled: bool = True
+    quiet_hours_start: str | None = None
+    quiet_hours_end: str | None = None
+
+
+class MobileActionLinkPayload(BaseModel):
+    owner_id: str = Field(min_length=2)
+    action: str = Field(min_length=2)
+    payload: dict[str, Any] = Field(default_factory=dict)
+    ttl_minutes: int = Field(default=30, ge=1, le=180)
+
+
+class MobileDispatchAlertPayload(BaseModel):
+    owner_id: str = Field(min_length=2)
+    message: str = Field(min_length=2)
+    include_approval_links: bool = False
+    action_payload: dict[str, Any] = Field(default_factory=dict)
+
+
+class EmailDispatchAlertPayload(BaseModel):
+    owner_id: str = Field(min_length=2)
+    subject: str = Field(min_length=2)
+    message: str = Field(min_length=2)
+    include_approval_links: bool = False
+    action_payload: dict[str, Any] = Field(default_factory=dict)
+
+
+def _db() -> SupabaseService | None:
+    try:
+        return SupabaseService()
+    except DatabaseConnectionError:
+        return None
+
+
+def _load_conversation_history(owner_id: str, limit: int = 20) -> list[dict[str, Any]]:
+    """Loads conversation history from DB when available; otherwise from memory."""
+    global _CHAT_SESSIONS_DB_AVAILABLE
+    db = _db()
+    if db and _CHAT_SESSIONS_DB_AVAILABLE:
+        try:
+            rows = db.fetch_all("chat_sessions", {"owner_id": owner_id, "agent_role": "commander"})
+            rows.sort(key=lambda row: str(row.get("created_at") or ""))
+            return [
+                {
+                    "role": row.get("role") or "owner",
+                    "message": row.get("message") or "",
+                    "created_at": row.get("created_at") or "",
+                }
+                for row in rows[-limit:]
+            ]
+        except DatabaseConnectionError as exc:
+            if "chat_sessions" in str(exc).lower():
+                _CHAT_SESSIONS_DB_AVAILABLE = False
+
+    cached = _MEMORY_CHAT_SESSIONS.get(owner_id, [])
+    return cached[-limit:]
+
+
+def _save_exchange(owner_id: str, owner_message: str, commander_response: dict[str, Any]) -> None:
+    """Saves owner/commander exchange in DB, with in-memory fallback."""
+    global _CHAT_SESSIONS_DB_AVAILABLE
+    now_iso = datetime.now(timezone.utc).isoformat()
+    response_text = str(commander_response.get("response") or "")
+
+    db = _db()
+    if db and _CHAT_SESSIONS_DB_AVAILABLE:
+        try:
+            db.insert_one(
+                "chat_sessions",
+                {
+                    "owner_id": owner_id,
+                    "agent_role": "commander",
+                    "role": "owner",
+                    "message": owner_message,
+                    "created_at": now_iso,
+                },
+            )
+            db.insert_one(
+                "chat_sessions",
+                {
+                    "owner_id": owner_id,
+                    "agent_role": "commander",
+                    "role": "assistant",
+                    "message": response_text,
+                    "structured_payload": commander_response,
+                    "created_at": now_iso,
+                },
+            )
+            return
+        except DatabaseConnectionError as exc:
+            if "chat_sessions" in str(exc).lower():
+                _CHAT_SESSIONS_DB_AVAILABLE = False
+
+    _MEMORY_CHAT_SESSIONS.setdefault(owner_id, []).extend(
+        [
+            {"role": "owner", "message": owner_message, "created_at": now_iso},
+            {"role": "assistant", "message": response_text, "created_at": now_iso},
+        ]
+    )
+
+
+def _save_config(payload: CommanderConfigurePayload) -> dict[str, Any]:
+    updates = {
+        key: value
+        for key, value in payload.model_dump().items()
+        if key != "owner_id" and value is not None
+    }
+    if not updates:
+        raise HTTPException(status_code=400, detail="No configuration fields provided.")
+
+    db = _db()
+    if db:
+        try:
+            existing = db.fetch_all("commander_config", {"owner_id": payload.owner_id})
+            updates["updated_at"] = datetime.now(timezone.utc).isoformat()
+            if existing:
+                db.update_many("commander_config", {"owner_id": payload.owner_id}, updates)
+            else:
+                db.insert_one("commander_config", {"owner_id": payload.owner_id, **updates})
+            return {"owner_id": payload.owner_id, **updates}
+        except DatabaseConnectionError:
+            pass
+
+    current = _MEMORY_CONFIG.get(payload.owner_id, {"owner_id": payload.owner_id})
+    current.update(updates)
+    _MEMORY_CONFIG[payload.owner_id] = current
+    return current
+
+
+def _normalize_phone(value: str) -> str:
+    return "".join(ch for ch in (value or "") if ch.isdigit())
+
+
+def _find_owner_by_phone(phone_number: str) -> dict[str, Any] | None:
+    target = _normalize_phone(phone_number)
+    if not target:
+        return None
+
+    db = _db()
+    if not db:
+        return None
+
+    try:
+        owners = db.fetch_all("owners", {})
+    except DatabaseConnectionError:
+        return None
+
+    for owner in owners:
+        owner_phone = str(owner.get("phone") or owner.get("phone_number") or "")
+        if _normalize_phone(owner_phone) == target:
+            return owner
+    return None
+
+
+def _find_owner_by_email(email: str) -> dict[str, Any] | None:
+    target = str(email or "").strip().lower()
+    if not target:
+        return None
+
+    db = _db()
+    if not db:
+        return None
+
+    try:
+        owners = db.fetch_all("owners", {})
+    except DatabaseConnectionError:
+        return None
+
+    for owner in owners:
+        owner_email = str(owner.get("email") or "").strip().lower()
+        if owner_email == target:
+            return owner
+    return None
+
+
+def _process_owner_mobile_message(owner_id: str, message_body: str) -> dict[str, Any] | None:
+    message = (message_body or "").strip()
+    if not owner_id or not message:
+        return None
+
+    upper = message.upper()
+    if upper.startswith("STATUS"):
+        context = asyncio.run(commander_brain.gather_full_context(owner_id))
+        active = len(context.get("active_agents") or [])
+        summary = str(context.get("business_state", {}).get("summary") or "No business summary yet.")
+        return {
+            "success": True,
+            "kind": "status",
+            "message": f"Commander status: {active} active agents. {summary}",
+            "owner_id": owner_id,
+        }
+
+    if upper.startswith("APPROVE ") or upper.startswith("DECLINE "):
+        parts = message.split(maxsplit=1)
+        decision = parts[0].lower()
+        token = parts[1].strip() if len(parts) > 1 else ""
+        if not token:
+            return {"success": False, "kind": "action", "message": "Missing action token."}
+        try:
+            decoded = verify_and_consume_action_token(token, expected_action="approval")
+        except ValueError as error:
+            return {"success": False, "kind": "action", "message": str(error)}
+        payload = decoded.get("payload") or {}
+        item_label = str(payload.get("label") or payload.get("id") or "item")
+        return {
+            "success": True,
+            "kind": "action",
+            "message": f"{decision.title()} recorded for {item_label}.",
+            "owner_id": owner_id,
+            "decision": decision,
+            "action_payload": payload,
+        }
+
+    response = commander_brain.process_owner_request(
+        owner_message=message,
+        owner_id=owner_id,
+        conversation_history=_load_conversation_history(owner_id),
+        context=asyncio.run(commander_brain.gather_full_context(owner_id)),
+    )
+    _save_exchange(owner_id, message, response)
+    return {
+        "success": True,
+        "kind": "chat",
+        "message": str(response.get("response") or "Commander processed your request."),
+        "owner_id": owner_id,
+    }
+
+
+def _save_mobile_prefs(payload: MobilePreferencesPayload) -> dict[str, Any]:
+    prefs = payload.model_dump()
+    prefs["updated_at"] = datetime.now(timezone.utc).isoformat()
+    db = _db()
+    if db:
+        try:
+            existing = db.fetch_all("commander_mobile_prefs", {"owner_id": payload.owner_id})
+            if existing:
+                db.update_many("commander_mobile_prefs", {"owner_id": payload.owner_id}, prefs)
+            else:
+                db.insert_one("commander_mobile_prefs", prefs)
+            return prefs
+        except DatabaseConnectionError:
+            pass
+    _MEMORY_MOBILE_PREFS[payload.owner_id] = prefs
+    return prefs
+
+
+def _load_mobile_prefs(owner_id: str) -> dict[str, Any]:
+    db = _db()
+    if db:
+        try:
+            rows = db.fetch_all("commander_mobile_prefs", {"owner_id": owner_id})
+            if rows:
+                return rows[0]
+        except DatabaseConnectionError:
+            pass
+    return _MEMORY_MOBILE_PREFS.get(
+        owner_id,
+        {
+            "owner_id": owner_id,
+            "alerts_enabled": True,
+            "approvals_enabled": True,
+            "quiet_hours_start": None,
+            "quiet_hours_end": None,
+        },
+    )
+
+
+def process_mobile_command(from_number: str, message_body: str) -> dict[str, Any] | None:
+    owner = _find_owner_by_phone(from_number)
+    if not owner:
+        return None
+
+    owner_id = str(owner.get("id") or "")
+    return _process_owner_mobile_message(owner_id=owner_id, message_body=message_body)
+
+
+def process_owner_email_command(from_email: str, message_body: str) -> dict[str, Any] | None:
+    owner = _find_owner_by_email(from_email)
+    if not owner:
+        return None
+
+    owner_id = str(owner.get("id") or "")
+    return _process_owner_mobile_message(owner_id=owner_id, message_body=message_body)
+
+
+@router.post("/message")
+def commander_message(payload: CommanderMessagePayload) -> dict[str, Any]:
+    """Owner chats with Commander and receives one unified response."""
+    history = _load_conversation_history(payload.owner_id, limit=20)
+    context = asyncio.run(commander_brain.gather_full_context(payload.owner_id))
+
+    response = commander_brain.process_owner_request(
+        owner_message=payload.message,
+        owner_id=payload.owner_id,
+        conversation_history=history,
+        context=context,
+    )
+
+    _save_exchange(payload.owner_id, payload.message, response)
+
+    dispatch_agent_action(
+        agent_id="commander",
+        agent_name=str(response.get("commander_name") or "Commander"),
+        action_type="commander_response",
+        message=str(response.get("summary_for_activity_log") or "Commander responded to owner."),
+        outcome="completed",
+    )
+
+    return {
+        **response,
+        "owner_id": payload.owner_id,
+        "history_count": len(history),
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+@router.get("/briefing/{owner_id}")
+def commander_briefing(owner_id: str) -> dict[str, Any]:
+    """Returns the owner's morning briefing, generating it on-demand."""
+    briefing = commander_brain.morning_briefing(owner_id)
+    return {"owner_id": owner_id, "briefing": briefing, "generated_at": datetime.now(timezone.utc).isoformat()}
+
+
+@router.get("/context/{owner_id}")
+def commander_context(owner_id: str) -> dict[str, Any]:
+    """Returns the latest full Commander context snapshot for dashboard use."""
+    snapshot = asyncio.run(commander_brain.gather_full_context(owner_id))
+    return snapshot
+
+
+@router.post("/configure")
+def commander_configure(payload: CommanderConfigurePayload) -> dict[str, Any]:
+    """Updates owner-specific Commander preferences immediately."""
+    saved = _save_config(payload)
+    return {"status": "configured", "config": saved, "updated_at": datetime.now(timezone.utc).isoformat()}
+
+
+@router.post("/mobile/preferences")
+def commander_mobile_preferences(payload: MobilePreferencesPayload) -> dict[str, Any]:
+    saved = _save_mobile_prefs(payload)
+    return {"status": "configured", "preferences": saved}
+
+
+@router.get("/mobile/preferences/{owner_id}")
+def commander_mobile_preferences_get(owner_id: str) -> dict[str, Any]:
+    return {"owner_id": owner_id, "preferences": _load_mobile_prefs(owner_id)}
+
+
+@router.post("/mobile/action-link")
+def commander_mobile_action_link(payload: MobileActionLinkPayload) -> dict[str, Any]:
+    token = create_action_token(
+        owner_id=payload.owner_id,
+        action=payload.action,
+        payload=payload.payload,
+        ttl_minutes=payload.ttl_minutes,
+    )
+    return {
+        "owner_id": payload.owner_id,
+        "action": payload.action,
+        "token": token,
+        "expires_in_minutes": payload.ttl_minutes,
+    }
+
+
+@router.post("/mobile/dispatch-alert")
+def commander_mobile_dispatch_alert(payload: MobileDispatchAlertPayload) -> dict[str, Any]:
+    db = _db()
+    if not db:
+        raise HTTPException(status_code=503, detail="Database unavailable.")
+    try:
+        owners = db.fetch_all("owners", {"id": payload.owner_id})
+    except DatabaseConnectionError as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
+
+    if not owners:
+        raise HTTPException(status_code=404, detail="Owner not found.")
+
+    owner_phone = str(owners[0].get("phone") or owners[0].get("phone_number") or "").strip()
+    if not owner_phone:
+        raise HTTPException(status_code=400, detail="Owner phone number is missing.")
+
+    message = payload.message
+    if payload.include_approval_links:
+        approve = create_action_token(payload.owner_id, "approval", {**payload.action_payload, "decision": "approve"})
+        decline = create_action_token(payload.owner_id, "approval", {**payload.action_payload, "decision": "decline"})
+        message = (
+            f"{message}\n"
+            f"Reply APPROVE {approve} to approve.\n"
+            f"Reply DECLINE {decline} to decline."
+        )
+
+    sms_result = send_sms(to=owner_phone, message=message)
+    return {"status": "sent", "owner_id": payload.owner_id, "sms": sms_result}
+
+
+@router.post("/email/dispatch-alert")
+def commander_email_dispatch_alert(payload: EmailDispatchAlertPayload) -> dict[str, Any]:
+    db = _db()
+    if not db:
+        raise HTTPException(status_code=503, detail="Database unavailable.")
+    try:
+        owners = db.fetch_all("owners", {"id": payload.owner_id})
+    except DatabaseConnectionError as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
+
+    if not owners:
+        raise HTTPException(status_code=404, detail="Owner not found.")
+
+    owner_email = str(owners[0].get("email") or "").strip()
+    if not owner_email:
+        raise HTTPException(status_code=400, detail="Owner email is missing.")
+
+    message = payload.message
+    if payload.include_approval_links:
+        approve = create_action_token(payload.owner_id, "approval", {**payload.action_payload, "decision": "approve"})
+        decline = create_action_token(payload.owner_id, "approval", {**payload.action_payload, "decision": "decline"})
+        message = (
+            f"{message}\n\n"
+            "To approve, reply with this subject line:\n"
+            f"APPROVE {approve}\n\n"
+            "To decline, reply with this subject line:\n"
+            f"DECLINE {decline}"
+        )
+
+    # Simple html conversion keeps plaintext semantics and improves readability in mail clients.
+    html = "<br>".join(message.splitlines())
+    email_result = send_resend_email(to_email=owner_email, subject=payload.subject, html=html)
+    return {"status": "sent", "owner_id": payload.owner_id, "email": email_result}

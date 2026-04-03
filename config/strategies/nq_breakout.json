@@ -1,0 +1,22 @@
+{
+	"name": "NQ Opening Range Breakout",
+	"instrument": "NQ",
+	"session_start": "09:30",
+	"session_end": "11:00",
+	"timeframe": "5m",
+	"setup_type": "breakout",
+	"risk_rules": {
+		"max_daily_trades": 2,
+		"max_daily_loss_dollars": 180,
+		"stop_after_consecutive_losses": 2
+	},
+	"entry_rules": [
+		"Mark opening range high and low.",
+		"Take breakout only with volume expansion.",
+		"Avoid entries directly into major resistance."
+	],
+	"exit_rules": [
+		"Trim at first measured move target.",
+		"Exit remainder on trailing structure break."
+	]
+}

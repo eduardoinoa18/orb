@@ -1,0 +1,22 @@
+{
+	"name": "ORB Master Strategy",
+	"instrument": "ES",
+	"session_start": "09:30",
+	"session_end": "11:30",
+	"timeframe": "5m",
+	"setup_type": "hybrid",
+	"risk_rules": {
+		"max_daily_trades": 3,
+		"max_daily_loss_dollars": 150,
+		"stop_after_consecutive_losses": 2
+	},
+	"entry_rules": [
+		"Trade A-plus momentum and breakout setups only.",
+		"Confirm trend alignment before entry.",
+		"Do not trade major news spikes without confirmation."
+	],
+	"exit_rules": [
+		"Reduce risk quickly when trade stalls.",
+		"Capture partial profits systematically."
+	]
+}
