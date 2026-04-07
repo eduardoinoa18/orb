@@ -28,3 +28,4 @@ resend
 stripe
 sentry-sdk[fastapi]
 swagger-ui-bundle
+slowapi
