@@ -2,6 +2,8 @@
 -- Create this in your Supabase SQL Editor and run it once
 -- This creates all 9 tables needed for ORB to function
 
+CREATE EXTENSION IF NOT EXISTS "pgcrypto";
+
 -- ============================================
 -- TABLE 1: OWNERS (Users)
 -- ============================================
@@ -109,7 +111,36 @@ CREATE TABLE IF NOT EXISTS sequences (
 );
 
 -- ============================================
--- TABLE 6: PAPER_TRADES (Orion Test Trades)
+-- TABLE 6: STRATEGIES (Orion Trading Rules)  -- moved before paper_trades to fix FK forward reference
+-- ============================================
+CREATE TABLE IF NOT EXISTS strategies (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  owner_id UUID NOT NULL REFERENCES owners(id) ON DELETE CASCADE,
+  
+  name TEXT NOT NULL,
+  description TEXT,
+  entry_rule TEXT, -- "price > ema_20 AND rsi < 30"
+  exit_rule TEXT,
+  
+  version INT DEFAULT 1, -- v1, v2, v3 as strategy improves
+  status TEXT DEFAULT 'testing', -- testing, live, retired
+  
+  performance_win_pct DECIMAL(5, 2), -- Percentage of trades that were profitable
+  performance_avg_win_cents INT, -- Average profit per winning trade
+  performance_avg_loss_cents INT, -- Average loss per losing trade
+  performance_trades_total INT DEFAULT 0,
+  
+  created_at TIMESTAMP DEFAULT now(),
+  last_tested_at TIMESTAMP,
+  last_performance_update_at TIMESTAMP,
+  
+  -- For learning/improvement
+  last_improvement_suggestion TEXT,
+  owner_approved BOOLEAN DEFAULT true
+);
+
+-- ============================================
+-- TABLE 7: PAPER_TRADES (Orion Test Trades)
 -- ============================================
 CREATE TABLE IF NOT EXISTS paper_trades (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -139,35 +170,6 @@ CREATE TABLE IF NOT EXISTS paper_trades (
   
   created_at TIMESTAMP DEFAULT now(),
   updated_at TIMESTAMP DEFAULT now()
-);
-
--- ============================================
--- TABLE 7: STRATEGIES (Orion Trading Rules)
--- ============================================
-CREATE TABLE IF NOT EXISTS strategies (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  owner_id UUID NOT NULL REFERENCES owners(id) ON DELETE CASCADE,
-  
-  name TEXT NOT NULL,
-  description TEXT,
-  entry_rule TEXT, -- "price > ema_20 AND rsi < 30"
-  exit_rule TEXT,
-  
-  version INT DEFAULT 1, -- v1, v2, v3 as strategy improves
-  status TEXT DEFAULT 'testing', -- testing, live, retired
-  
-  performance_win_pct DECIMAL(5, 2), -- Percentage of trades that were profitable
-  performance_avg_win_cents INT, -- Average profit per winning trade
-  performance_avg_loss_cents INT, -- Average loss per losing trade
-  performance_trades_total INT DEFAULT 0,
-  
-  created_at TIMESTAMP DEFAULT now(),
-  last_tested_at TIMESTAMP,
-  last_performance_update_at TIMESTAMP,
-  
-  -- For learning/improvement
-  last_improvement_suggestion TEXT,
-  owner_approved BOOLEAN DEFAULT true
 );
 
 -- ============================================
@@ -301,6 +303,23 @@ CREATE TABLE IF NOT EXISTS chat_sessions (
 );
 
 -- ============================================
+-- HARDENING FOR RE-RUNS (Existing DBs)
+-- ============================================
+-- If a table already existed without owner_id, indexes/policies below can fail.
+-- These guards make the script safe to rerun.
+ALTER TABLE IF EXISTS agents ADD COLUMN IF NOT EXISTS owner_id UUID;
+ALTER TABLE IF EXISTS activity_log ADD COLUMN IF NOT EXISTS owner_id UUID;
+ALTER TABLE IF EXISTS leads ADD COLUMN IF NOT EXISTS owner_id UUID;
+ALTER TABLE IF EXISTS sequences ADD COLUMN IF NOT EXISTS owner_id UUID;
+ALTER TABLE IF EXISTS paper_trades ADD COLUMN IF NOT EXISTS owner_id UUID;
+ALTER TABLE IF EXISTS strategies ADD COLUMN IF NOT EXISTS owner_id UUID;
+ALTER TABLE IF EXISTS tasks ADD COLUMN IF NOT EXISTS owner_id UUID;
+ALTER TABLE IF EXISTS content ADD COLUMN IF NOT EXISTS owner_id UUID;
+ALTER TABLE IF EXISTS daily_costs ADD COLUMN IF NOT EXISTS owner_id UUID;
+ALTER TABLE IF EXISTS commander_config ADD COLUMN IF NOT EXISTS owner_id UUID;
+ALTER TABLE IF EXISTS chat_sessions ADD COLUMN IF NOT EXISTS owner_id UUID;
+
+-- ============================================
 -- INDEXES (For Speed)
 -- ============================================
 
@@ -359,6 +378,21 @@ ALTER TABLE tasks ENABLE ROW LEVEL SECURITY;
 ALTER TABLE content ENABLE ROW LEVEL SECURITY;
 ALTER TABLE sequences ENABLE ROW LEVEL SECURITY;
 ALTER TABLE daily_costs ENABLE ROW LEVEL SECURITY;
+ALTER TABLE commander_config ENABLE ROW LEVEL SECURITY;
+ALTER TABLE chat_sessions ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "owners see own record" ON owners;
+DROP POLICY IF EXISTS "owners see own agents" ON agents;
+DROP POLICY IF EXISTS "owners see own leads" ON leads;
+DROP POLICY IF EXISTS "owners see own activity" ON activity_log;
+DROP POLICY IF EXISTS "owners see own paper trades" ON paper_trades;
+DROP POLICY IF EXISTS "owners see own strategies" ON strategies;
+DROP POLICY IF EXISTS "owners see own tasks" ON tasks;
+DROP POLICY IF EXISTS "owners see own content" ON content;
+DROP POLICY IF EXISTS "owners see own sequences" ON sequences;
+DROP POLICY IF EXISTS "owners see own daily costs" ON daily_costs;
+DROP POLICY IF EXISTS "owners see own commander config" ON commander_config;
+DROP POLICY IF EXISTS "owners see own chat sessions" ON chat_sessions;
 
 -- Owners see only their own record
 CREATE POLICY "owners see own record"
@@ -408,6 +442,15 @@ USING (owner_id = auth.uid());
 -- Daily costs: owners see only their own costs
 CREATE POLICY "owners see own daily costs"
 ON daily_costs FOR ALL
+USING (owner_id = auth.uid());
+
+-- Commander: owners see only their own preferences and chat
+CREATE POLICY "owners see own commander config"
+ON commander_config FOR ALL
+USING (owner_id = auth.uid());
+
+CREATE POLICY "owners see own chat sessions"
+ON chat_sessions FOR ALL
 USING (owner_id = auth.uid());
 
 -- ============================================
