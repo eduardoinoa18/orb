@@ -1,11 +1,22 @@
 """Centralized environment settings for ORB.
 
-This module loads .env values, validates required fields, and exposes
-`get_settings()` so other modules can share one cached settings object.
+DESIGN PHILOSOPHY
+-----------------
+Only truly bootstrapping secrets are *required* at startup:
+  - SUPABASE_URL / SUPABASE_SERVICE_KEY / SUPABASE_ANON_KEY  (database)
+  - JWT_SECRET_KEY                                             (auth signing)
+  - PLATFORM_NAME / PLATFORM_DOMAIN / ENVIRONMENT             (identity)
+  - MY_EMAIL                                                   (owner routing)
+
+All other keys (AI providers, Twilio, Google, Stripe, etc.) are *optional*
+and can be configured post-launch via the Integration Hub UI.  The
+`require()` / `resolve()` helpers raise clear errors at call-time rather
+than blocking the app from starting.
 """
 
 from __future__ import annotations
 
+import secrets
 from functools import lru_cache
 from pathlib import Path
 
@@ -21,92 +32,54 @@ def _looks_placeholder(value: str) -> bool:
     lowered = (value or "").strip().lower()
     if not lowered:
         return True
-    marker_words = (
-        "placeholder",
-        "replace",
-        "changeme",
-        "example",
-        "test",
-        "your_",
-        "your-",
-    )
+    # Avoid false-positives on real URLs that contain "example"
+    if lowered.startswith("http"):
+        return False
+    marker_words = ("placeholder", "replace", "changeme", "your_", "your-", "insert_")
     return any(word in lowered for word in marker_words)
 
 
 class Settings(BaseSettings):
     """Strongly typed application settings loaded from environment variables."""
 
-    # Core Platform
-    platform_name: str
-    platform_domain: str
-    jwt_secret_key: str
-    environment: str
+    # ── Core Platform (REQUIRED) ───────────────────────────────────────────────
+    platform_name: str = "ORB"
+    platform_domain: str = "localhost"
+    jwt_secret_key: str = ""
+    environment: str = "development"
 
-    # Database
-    supabase_url: str
-    supabase_service_key: str
-    supabase_anon_key: str
+    # ── Database (REQUIRED) ───────────────────────────────────────────────────
+    supabase_url: str = ""
+    supabase_service_key: str = ""
+    supabase_anon_key: str = ""
 
-    # AI Brains
-    anthropic_api_key: str
-    openai_api_key: str
+    # ── Owner Identity (REQUIRED) ─────────────────────────────────────────────
+    my_email: str = ""
+    my_phone_number: str = ""
+    my_business_address: str = ""
 
-    # Communications
-    twilio_account_sid: str
-    twilio_auth_token: str
-    twilio_from_number: str
-    bland_ai_api_key: str
-
-    # Owner Details
-    my_phone_number: str
-    my_email: str
-    my_business_address: str
-
-    # Market Data
-    alpha_vantage_api_key: str
-    marketaux_api_key: str
-
-    # Google APIs
-    google_client_id: str
-    google_client_secret: str
-    google_redirect_uri: str
-
-    # Helpful runtime metadata
-    app_version: str = "0.1.0"
-    allowed_local_origins: list[str] = [
-        "http://localhost",
-        "http://localhost:3000",
-        "http://localhost:5173",
-        "http://127.0.0.1:3000",
-        "http://127.0.0.1:5173",
-    ]
-    api_prefix: str = ""
-    google_workspace_admin_email: str = ""
-    tradingview_webhook_secret: str = ""
-
-    # Addendum optional settings
-    railway_api_token: str = ""
-    railway_project_id: str = ""
-    token_cache_ttl_minutes: int = 1440
-    computer_use_enabled: bool = False
-    computer_use_screenshot_dir: str = "artifacts/screenshots"
-    aria_briefing_enabled: bool = True
-    aria_briefing_hour: int = 7
-    aria_briefing_minute: int = 0
-    aria_briefing_timezone: str = "America/New_York"
-    sage_monitor_enabled: bool = True
-    sage_monitor_interval_minutes: int = 30
-    encryption_secret: str = ""
-    mfa_secret_key: str = ""
-    session_secret: str = ""
-    whisper_enabled: bool = False
-    rate_limit_redis_url: str = ""
+    # ── AI Providers (optional — configure via Integration Hub) ───────────────
+    anthropic_api_key: str = ""
+    openai_api_key: str = ""
     google_ai_api_key: str = ""
     groq_api_key: str = ""
     mistral_api_key: str = ""
     ollama_base_url: str = "http://localhost:11434"
-    privacy_mode: bool = False
+
+    # ── Communications (optional) ─────────────────────────────────────────────
+    twilio_account_sid: str = ""
+    twilio_auth_token: str = ""
+    twilio_from_number: str = ""
+    bland_ai_api_key: str = ""
     resend_api_key: str = ""
+
+    # ── Google OAuth (optional) ───────────────────────────────────────────────
+    google_client_id: str = ""
+    google_client_secret: str = ""
+    google_redirect_uri: str = ""
+    google_workspace_admin_email: str = ""
+
+    # ── Payments (optional) ───────────────────────────────────────────────────
     stripe_secret_key: str = ""
     stripe_publishable_key: str = ""
     stripe_webhook_secret: str = ""
@@ -123,24 +96,54 @@ class Settings(BaseSettings):
     stripe_price_sage_monthly: str = ""
     stripe_price_atlas_monthly: str = ""
     stripe_price_commander_monthly: str = ""
+
+    # ── Market Data (optional) ────────────────────────────────────────────────
+    alpha_vantage_api_key: str = ""
+    marketaux_api_key: str = ""
+    tradingview_webhook_secret: str = ""
+
+    # ── Security extras (auto-generated if blank) ─────────────────────────────
+    encryption_secret: str = ""
+    mfa_secret_key: str = ""
+    session_secret: str = ""
     email_webhook_secret: str = ""
+
+    # ── Infrastructure (optional) ─────────────────────────────────────────────
+    railway_api_token: str = ""
+    railway_project_id: str = ""
     sentry_dsn: str = ""
-    next_public_api_url: str = ""
-    next_public_stripe_pk: str = ""
+    rate_limit_redis_url: str = ""
     superadmin_email: str = ""
 
-    _required_fields = {
-        "platform_name",
-        "platform_domain",
-        "jwt_secret_key",
-        "environment",
-        "supabase_url",
-        "supabase_service_key",
-        "supabase_anon_key",
-        "my_phone_number",
-        "my_email",
-        "my_business_address",
-    }
+    # ── Feature flags ─────────────────────────────────────────────────────────
+    computer_use_enabled: bool = False
+    computer_use_screenshot_dir: str = "artifacts/screenshots"
+    aria_briefing_enabled: bool = True
+    aria_briefing_hour: int = 7
+    aria_briefing_minute: int = 0
+    aria_briefing_timezone: str = "America/New_York"
+    sage_monitor_enabled: bool = True
+    sage_monitor_interval_minutes: int = 30
+    token_cache_ttl_minutes: int = 1440
+    whisper_enabled: bool = False
+    privacy_mode: bool = False
+
+    # ── Frontend ──────────────────────────────────────────────────────────────
+    next_public_api_url: str = ""
+    next_public_stripe_pk: str = ""
+
+    # ── Runtime metadata ──────────────────────────────────────────────────────
+    app_version: str = "1.0.0"
+    api_prefix: str = ""
+    allowed_local_origins: list[str] = [
+        "http://localhost",
+        "http://localhost:3000",
+        "http://localhost:3001",
+        "http://localhost:5173",
+        "http://127.0.0.1:3000",
+        "http://127.0.0.1:3001",
+        "http://127.0.0.1:5173",
+    ]
 
     model_config = SettingsConfigDict(
         env_file=str(ENV_FILE),
@@ -149,86 +152,114 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
+    # ── Validation ────────────────────────────────────────────────────────────
     @model_validator(mode="after")
-    def validate_required_values(self) -> "Settings":
-        """Fail loudly if any required variable is missing or blank."""
+    def validate_bootstrap_secrets(self) -> "Settings":
+        """Ensure the minimal set of bootstrap secrets is present."""
         missing: list[str] = []
-        for field_name in self._required_fields:
-            value = getattr(self, field_name, None)
-            if value is None or not str(value).strip():
-                missing.append(field_name.upper())
+
+        if not self.supabase_url.strip():
+            missing.append("SUPABASE_URL")
+        if not self.supabase_service_key.strip():
+            missing.append("SUPABASE_SERVICE_KEY")
+        if not self.supabase_anon_key.strip():
+            missing.append("SUPABASE_ANON_KEY")
+
+        # Auto-generate JWT secret if missing (non-production)
+        if not self.jwt_secret_key.strip():
+            if self.environment.lower() in ("production", "prod"):
+                missing.append("JWT_SECRET_KEY")
+            else:
+                object.__setattr__(self, "jwt_secret_key", secrets.token_hex(32))
+
+        # Auto-generate encryption secret if missing
+        if not self.encryption_secret.strip():
+            object.__setattr__(self, "encryption_secret", secrets.token_hex(32))
 
         if missing:
-            if "ANTHROPIC_API_KEY" in missing:
-                raise ValueError(
-                    "Missing required environment variable: ANTHROPIC_API_KEY. "
-                    "Get your key from https://console.anthropic.com/settings/keys, "
-                    "then add it to orb-platform/.env."
-                )
             raise ValueError(
-                "Missing required environment variables in orb-platform/.env: "
-                + ", ".join(sorted(missing))
+                "ORB cannot start. Missing required environment variables:\n"
+                + "\n".join(f"  • {v}" for v in sorted(missing))
+                + "\n\nSet these in Railway → Variables or in orb-platform/.env"
             )
 
         return self
 
+    # ── Backward-compat properties ────────────────────────────────────────────
     @property
     def app_name(self) -> str:
-        """Backward-compatible alias used by existing `app/*` modules."""
         return self.platform_name
 
     @property
     def twilio_phone_number(self) -> str:
-        """Backward-compatible alias for older integration code."""
         return self.twilio_from_number
 
     @property
     def cors_origins(self) -> list[str]:
-        """Returns CORS origins compatible with both app and platform APIs."""
         production_origins = {
             f"https://{self.platform_domain}",
             f"http://{self.platform_domain}",
+            f"https://www.{self.platform_domain}",
         }
         return list(dict.fromkeys([*self.allowed_local_origins, *production_origins]))
 
+    # ── Runtime helpers ───────────────────────────────────────────────────────
     def require(self, key_name: str) -> str:
-        """Returns a non-empty setting value or raises a clear runtime error."""
+        """Returns a non-empty setting or raises a clear runtime error."""
         value = self.resolve(key_name, default="")
-        alias_map = {
-            "twilio_phone_number": "twilio_from_number",
-        }
-        resolved_name = alias_map.get(key_name, key_name)
-        if value is None or not str(value).strip() or _looks_placeholder(str(value)):
+        if not value or _looks_placeholder(value):
             raise RuntimeError(
-                f"Configuration error: '{resolved_name.upper()}' is missing or placeholder in orb-platform/.env and platform settings."
+                f"Integration '{key_name.upper()}' is not configured. "
+                f"Add it in the Integration Hub or set {key_name.upper()} in Railway Variables."
             )
-        return str(value).strip()
+        return value
 
     def resolve(self, key_name: str, default: str = "") -> str:
-        """Resolve a setting from env first, then encrypted UI-stored settings when needed."""
-        alias_map = {
-            "twilio_phone_number": "twilio_from_number",
-        }
+        """Resolve from env first, then encrypted DB settings store."""
+        alias_map = {"twilio_phone_number": "twilio_from_number"}
         resolved_name = alias_map.get(key_name, key_name)
-        value = getattr(self, resolved_name, "")
-        normalized = str(value).strip() if value is not None else ""
+        value = getattr(self, resolved_name, "") or ""
+        normalized = str(value).strip()
         if normalized and not _looks_placeholder(normalized):
             return normalized
 
+        # Fall back to encrypted UI-stored value
         try:
             from app.database.settings_store import SettingsStore
-
             stored = SettingsStore().get(resolved_name, default="")
-            stored_normalized = str(stored).strip() if stored is not None else ""
-            if stored_normalized:
-                return stored_normalized
+            stored_norm = str(stored).strip() if stored else ""
+            if stored_norm:
+                return stored_norm
         except Exception:
             pass
 
         return normalized or default
 
+    def is_configured(self, key_name: str) -> bool:
+        """Returns True if a setting has a real (non-placeholder) value."""
+        try:
+            val = self.resolve(key_name, default="")
+            return bool(val and not _looks_placeholder(val))
+        except Exception:
+            return False
+
+    def integration_status(self) -> dict[str, bool]:
+        """Returns a dict of integration name → configured status for the UI."""
+        return {
+            "anthropic": self.is_configured("anthropic_api_key"),
+            "openai": self.is_configured("openai_api_key"),
+            "twilio": self.is_configured("twilio_account_sid"),
+            "bland_ai": self.is_configured("bland_ai_api_key"),
+            "google_oauth": self.is_configured("google_client_id"),
+            "stripe": self.is_configured("stripe_secret_key"),
+            "resend": self.is_configured("resend_api_key"),
+            "alpha_vantage": self.is_configured("alpha_vantage_api_key"),
+            "sentry": self.is_configured("sentry_dsn"),
+            "railway": self.is_configured("railway_api_token"),
+        }
+
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
-    """Returns cached settings so env parsing happens once per process."""
+    """Returns cached settings — env parsing happens once per process."""
     return Settings()

@@ -27,10 +27,12 @@ from app.api.middleware.rate_limit import limiter
 from app.api.routes import (
     access,
     agents,
+    agent_settings,
     aria,
     auth_google,
     billing,
     commander,
+    commander_settings,
     computer_use,
     content,
     dashboard,
@@ -47,6 +49,7 @@ from app.api.routes import (
     wholesale,
 )
 from app.api.routes import atlas
+from app.api.routes import integrations
 from app.api.routes import setup
 from app.database.connection import DatabaseConnectionError, SupabaseService
 from app.ui_shell import render_dashboard, render_home, render_login
@@ -188,78 +191,27 @@ async def request_logging_middleware(request: Request, call_next: Callable):
 async def jwt_auth_middleware(request: Request, call_next: Callable):
     """Validates bearer tokens for protected routes while keeping health public."""
     public_paths = {
+        # Core
         "/",
         "/api",
-        "/login",
-        "/dashboard",
-        "/dashboard/data",
-        "/dashboard/overview",
-        "/dashboard/pipeline",
-        "/dashboard/approvals",
-        "/dashboard/command-center",
-        "/dashboard/setup-checklist",
-        "/dashboard/integrations",
-        "/dashboard/integrations/live-check",
         "/health",
         "/docs",
         "/openapi.json",
+        # Auth flows — must be public for redirect to work
+        "/login",
         "/auth/google/start",
         "/auth/google/callback",
+        "/aria/google/authorize",
+        "/aria/google/connect",
+        # Onboarding + Auth — unauthenticated flows
+        "/onboarding/login",
         "/onboarding/register",
         "/onboarding/about",
         "/onboarding/commander",
         "/onboarding/plan",
         "/onboarding/first-agent",
         "/onboarding/connect-tool",
-        "/onboarding/status/",
-        "/commander/message",
-        "/agents/status",
-        "/agents/nova/status",
-        "/agents/nova/content-status",
-        "/agents/nova/weekly-calendar",
-        "/agents/nova/listing-post",
-        "/agents/nova/market-update",
-        "/agents/nova/just-sold",
-        "/agents/nova/content",
-        "/agents/nova/content/pending",
-        "/agents/nova/content/batch-approve",
-        "/agents/nova/learn-outcomes",
-        "/agents/nova/owner-needs",
-        "/agents/optimizer/status",
-        "/agents/optimizer/optimize",
-        "/agents/optimizer/efficiency",
-        "/agents/orion/status",
-        "/agents/orion/ingest",
-        "/agents/orion/scan",
-        "/agents/orion/paper-trade/test",
-        "/agents/orion/smoke-run",
-        "/agents/orion/performance",
-        "/agents/orion/learn-outcomes",
-        "/agents/rex/status",
-        "/agents/rex/learn-owner",
-        "/agents/rex/learn-outcomes",
-        "/agents/sage/status",
-        "/agents/sage/platform-monitor",
-        "/agents/sage/learn-outcomes",
-        "/agents/computer-use/status",
-        "/agents/computer-use/safety-check",
-        "/agents/provision",
-        "/agents/atlas/status",
-        "/agents/atlas/generate",
-        "/agents/atlas/diagnose",
-        "/agents/atlas/advise",
-        "/agents/atlas/security-scan",
-        "/agents/atlas/build-history",
-        "/trading/status",
-        "/setup/status",
-        "/setup/categories",
-        "/setup/schema-readiness",
-        "/setup/preflight",
-        "/setup/save-key",
-        "/setup/test-key",
-        "/setup/provision-first-agent",
-        "/wholesale/status",
-        "/webhooks/status",
+        # Inbound webhooks — signed by external provider, not by JWT
         "/webhooks/stripe",
         "/webhooks/tradingview",
         "/webhooks/twilio/sms",
@@ -267,31 +219,17 @@ async def jwt_auth_middleware(request: Request, call_next: Callable):
         "/webhooks/email/incoming",
         "/webhooks/n8n/error",
         "/webhooks/n8n/complete",
-        "/aria/briefing/preview",
-        "/aria/briefing/summary",
-        "/aria/briefing/send-now",
-        "/aria/tasks",
-        "/aria/tasks/by-priority",
-        "/aria/learn-outcomes",
-        "/aria/learn-owner-style",
-        "/aria/google/status",
-        "/aria/google/authorize",
-        "/aria/google/connect",
-        "/aria/google/disconnect",
-        # Test endpoints are public during development (Level 2)
-        # Remove or protect these before going to production
-        "/test/claude",
-        "/test/sms",
-        "/test/database",
+        "/webhooks/status",
+        # Public status endpoints (read-only, no secrets)
+        "/setup/preflight",
+        "/setup/schema-readiness",
+        "/setup/status",
     }
 
     public_prefixes = (
         "/docs/",
         "/docs-assets/",
-        "/agents/nova/content/",
         "/onboarding/status/",
-        "/commander/briefing/",
-        "/commander/context/",
     )
 
     if request.url.path in public_paths or any(request.url.path.startswith(prefix) for prefix in public_prefixes):
@@ -579,11 +517,14 @@ async def health_check(deep: bool = False) -> dict[str, object]:
 
 app.include_router(agents.router)
 app.include_router(access.router)
+app.include_router(agent_settings.router)
 app.include_router(aria.router)
 app.include_router(auth_google.router)
 app.include_router(atlas.router)
 app.include_router(billing.router)
 app.include_router(commander.router)
+app.include_router(commander_settings.router)
+app.include_router(integrations.router)
 app.include_router(onboarding.router)
 app.include_router(content.router)
 app.include_router(setup.router)

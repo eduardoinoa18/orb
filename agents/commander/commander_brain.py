@@ -464,9 +464,9 @@ class CommanderBrain:
             "commander_name": commander_name,
         }
 
-    def morning_briefing(self, owner_id: str) -> str:
+    async def morning_briefing(self, owner_id: str) -> str:
         """Generates a personal morning briefing from full context."""
-        context = asyncio.run(self.gather_full_context(owner_id))
+        context = await self.gather_full_context(owner_id)
         profile = self._load_commander_profile(owner_id)
         owner_name = str(context.get("owner_profile", {}).get("owner_name") or "there")
         commander_name = str(profile.get("commander_name") or _DEFAULT_COMMANDER_NAME)
@@ -489,9 +489,9 @@ class CommanderBrain:
         ]
         return "\n\n".join(lines)
 
-    def weekly_review(self, owner_id: str) -> str:
+    async def weekly_review(self, owner_id: str) -> str:
         """Builds a strategic weekly review with higher-depth reasoning."""
-        context = asyncio.run(self.gather_full_context(owner_id))
+        context = await self.gather_full_context(owner_id)
         profile = self._load_commander_profile(owner_id)
         owner_name = str(context.get("owner_profile", {}).get("owner_name") or "Owner")
         commander_name = str(profile.get("commander_name") or _DEFAULT_COMMANDER_NAME)

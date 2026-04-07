@@ -1,31 +1,76 @@
-fastapi
-uvicorn[standard]
-supabase
-python-dotenv
-anthropic
-openai
-twilio
-httpx
-pydantic
-pydantic-settings
-python-jose[cryptography]
-passlib[bcrypt]
-schedule
-pandas
-numpy
-yfinance
-aiohttp
-pytest
-pytest-asyncio
-google-auth
-google-auth-oauthlib
-google-api-python-client
-google-generativeai
-groq
-mistralai
-websockets
-resend
-stripe
-sentry-sdk[fastapi]
-swagger-ui-bundle
-slowapi
+# ORB Platform - Pinned Requirements
+# Generated for Railway deployment - Python 3.12
+
+# ── Web Framework ──────────────────────────────────────────────────────────────
+fastapi==0.115.12
+uvicorn[standard]==0.34.0
+python-multipart==0.0.20
+
+# ── Rate Limiting ──────────────────────────────────────────────────────────────
+slowapi==0.1.9
+
+# ── Database ───────────────────────────────────────────────────────────────────
+supabase==2.15.1
+
+# ── Config & Env ───────────────────────────────────────────────────────────────
+python-dotenv==1.1.0
+pydantic==2.11.3
+pydantic-settings==2.9.0
+
+# ── Auth & Security ────────────────────────────────────────────────────────────
+python-jose[cryptography]==3.3.0
+passlib[bcrypt]==1.7.4
+cryptography==44.0.2
+pyotp==2.9.0
+
+# ── AI Providers ───────────────────────────────────────────────────────────────
+anthropic==0.51.0
+openai==1.78.0
+groq==0.25.0
+mistralai==1.7.3
+google-generativeai==0.8.4
+
+# ── Google APIs ────────────────────────────────────────────────────────────────
+google-auth==2.40.1
+google-auth-oauthlib==1.2.1
+google-api-python-client==2.165.0
+
+# ── Communications ─────────────────────────────────────────────────────────────
+twilio==9.6.0
+resend==2.10.0
+
+# ── HTTP Client ────────────────────────────────────────────────────────────────
+httpx==0.28.1
+aiohttp==3.11.18
+
+# ── Payments ───────────────────────────────────────────────────────────────────
+stripe==12.1.0
+
+# ── Market Data ────────────────────────────────────────────────────────────────
+yfinance==0.2.61
+
+# ── Task Scheduling ────────────────────────────────────────────────────────────
+schedule==1.2.2
+
+# ── Data Processing ────────────────────────────────────────────────────────────
+pandas==2.2.3
+numpy==2.2.4
+
+# ── WebSockets ─────────────────────────────────────────────────────────────────
+websockets==14.2
+
+# ── HTML / Validation ──────────────────────────────────────────────────────────
+bleach==6.2.0
+email-validator==2.2.0
+phonenumbers==9.0.4
+
+# ── Monitoring ─────────────────────────────────────────────────────────────────
+sentry-sdk[fastapi]==2.25.1
+
+# ── API Docs ───────────────────────────────────────────────────────────────────
+swagger-ui-bundle==1.1.0
+
+# ── Testing ────────────────────────────────────────────────────────────────────
+pytest==8.3.5
+pytest-asyncio==0.26.0
+httpx==0.28.1

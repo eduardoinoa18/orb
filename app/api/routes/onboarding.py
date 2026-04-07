@@ -1,21 +1,42 @@
-"""Registration and onboarding routes for Session 6 onboarding flow."""
+"""Registration, login, and onboarding routes for ORB."""
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 from uuid import uuid4
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, EmailStr, Field
+from jose import jwt
 
 from agents.identity.provisioner import provision_agent
 from app.api.routes import billing
 from app.database.connection import DatabaseConnectionError, SupabaseService
 from app.database.schema_readiness import schema_readiness_payload
+from config.settings import get_settings
+from integrations.auth_utils import (
+    hash_password,
+    verify_password,
+    record_failed_login,
+    is_locked_out,
+    clear_failed_logins,
+)
 from integrations.resend_client import send_resend_email
 
 router = APIRouter(prefix="/onboarding", tags=["onboarding"])
+
+
+def _make_jwt(owner_id: str, email: str) -> str:
+    """Issue a signed JWT for the given owner."""
+    settings = get_settings()
+    payload = {
+        "sub": owner_id,
+        "email": email,
+        "iat": datetime.now(timezone.utc),
+        "exp": datetime.now(timezone.utc) + timedelta(days=30),
+    }
+    return jwt.encode(payload, settings.jwt_secret_key, algorithm="HS256")
 
 _SESSIONS: dict[str, dict[str, Any]] = {}
 
@@ -137,7 +158,16 @@ def onboarding_register(payload: RegisterPayload) -> dict[str, Any]:
         raise HTTPException(status_code=400, detail="You must accept terms before creating an account.")
 
     owner_id = str(uuid4())
-    owner = _upsert_owner(owner_id, str(payload.email), {"plan": "starter", "subscription_status": "trialing"})
+    password_hash = hash_password(payload.password)
+    owner = _upsert_owner(
+        owner_id,
+        str(payload.email),
+        {
+            "plan": "starter",
+            "subscription_status": "trialing",
+            "password_hash": password_hash,
+        },
+    )
     _step_done(owner_id, "register", {"email": str(payload.email)})
 
     send_resend_email(
@@ -303,4 +333,66 @@ def onboarding_connect_tool(payload: ConnectToolPayload) -> dict[str, Any]:
         "completed": True,
         "next_step": "dashboard",
         "command_center_path": f"/dashboard?owner_id={payload.owner_id}",
+    }
+
+
+# ---------------------------------------------------------------------------
+# Login — returns JWT token + owner_id
+# ---------------------------------------------------------------------------
+
+class LoginPayload(BaseModel):
+    email: EmailStr
+    password: str
+
+
+@router.post("/login")
+def onboarding_login(payload: LoginPayload) -> dict[str, Any]:
+    """Authenticate owner with email + password; return JWT + owner_id."""
+    email = str(payload.email).lower().strip()
+
+    # Brute-force protection
+    if is_locked_out(email):
+        raise HTTPException(
+            status_code=429,
+            detail="Too many failed login attempts. Please wait 15 minutes and try again.",
+        )
+
+    db = _db()
+    if not db:
+        raise HTTPException(status_code=503, detail="Database unavailable. Please try again shortly.")
+
+    try:
+        rows = db.fetch_all("owners", {"email": email})
+    except DatabaseConnectionError:
+        raise HTTPException(status_code=503, detail="Database unavailable.")
+
+    if not rows:
+        record_failed_login(email)
+        raise HTTPException(status_code=401, detail="Invalid email or password.")
+
+    owner = rows[0]
+    stored_hash = owner.get("password_hash") or ""
+
+    if not stored_hash:
+        # Owner registered before password support — allow login, prompt to set password
+        raise HTTPException(
+            status_code=401,
+            detail="Account requires password reset. Please re-register or contact support.",
+        )
+
+    if not verify_password(payload.password, stored_hash):
+        record_failed_login(email)
+        raise HTTPException(status_code=401, detail="Invalid email or password.")
+
+    clear_failed_logins(email)
+    owner_id = str(owner["id"])
+    token = _make_jwt(owner_id, email)
+
+    return {
+        "token": token,
+        "owner_id": owner_id,
+        "email": email,
+        "name": owner.get("full_name") or owner.get("name") or "",
+        "plan": owner.get("plan") or "starter",
+        "message": "Login successful.",
     }
