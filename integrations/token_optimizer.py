@@ -22,15 +22,61 @@ AGENT_DAILY_BUDGETS = {
     "nova": 100,
     "orion": 100,
     "sage": 200,
+    "atlas": 200,
+    "commander": 200,
 }
+
+# Platform-wide hard limit (cents/day)
+PLATFORM_DAILY_BUDGET_CENTS = 1500
 
 
 TASK_TOKEN_LIMITS = {
+    # HAIKU tier
     "sms_compose": 100,
     "email_subject": 50,
+    "categorization": 200,
+    "date_calc": 100,
+    "status_check": 150,
+    # SONNET tier
+    "lead_qualification": 400,
+    "email_draft": 500,
+    "meeting_summary": 600,
+    "content_creation": 800,
+    "strategy_analysis": 800,
+    "code_generation": 1500,
+    "commander_response": 500,
+    # OPUS tier
+    "weekly_review": 1200,
+    "strategy_improvement": 1000,
+    "architecture": 1500,
+    "security_audit": 1000,
+    # Legacy keys kept for backwards-compat
     "short_analysis": 300,
     "long_analysis": 800,
     "full_strategy": 1500,
+}
+
+# Task types that must use a specific model tier (in normal budget mode).
+TASK_MODEL_MAP: dict[str, str] = {
+    # HAIKU
+    "sms_compose": "haiku",
+    "email_subject": "haiku",
+    "categorization": "haiku",
+    "date_calc": "haiku",
+    "status_check": "haiku",
+    # SONNET
+    "lead_qualification": "sonnet",
+    "email_draft": "sonnet",
+    "meeting_summary": "sonnet",
+    "content_creation": "sonnet",
+    "strategy_analysis": "sonnet",
+    "code_generation": "sonnet",
+    "commander_response": "sonnet",
+    # OPUS
+    "weekly_review": "opus",
+    "strategy_improvement": "opus",
+    "architecture": "opus",
+    "security_audit": "opus",
 }
 
 
@@ -127,6 +173,7 @@ class TokenOptimizer:
             complexity=complexity,
             max_budget_cents=max_budget_cents,
             budget_mode=budget_snapshot["budget_mode"],
+            task_type=task_type,
         )
         max_tokens = self._max_tokens_for_task(task_type, budget_mode=budget_snapshot["budget_mode"])
 
@@ -252,9 +299,19 @@ class TokenOptimizer:
             return 8
         return 10
 
-    def _select_model(self, complexity: int, max_budget_cents: int, budget_mode: str = "normal") -> str:
+    def _select_model(
+        self,
+        complexity: int,
+        max_budget_cents: int,
+        budget_mode: str = "normal",
+        task_type: str | None = None,
+    ) -> str:
+        # Budget constraints always override task-type preferences.
         if budget_mode in {"minimal", "deferred"}:
             return "haiku"
+        # Explicit task-type → model mapping takes precedence over complexity heuristic.
+        if task_type and task_type in TASK_MODEL_MAP:
+            return TASK_MODEL_MAP[task_type]
         if complexity <= 3:
             return "haiku"
         if complexity <= 6:

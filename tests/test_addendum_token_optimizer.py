@@ -138,3 +138,45 @@ def test_optimize_prompt_defers_non_critical_tasks_after_budget_is_exhausted() -
     assert result.should_defer is True
     assert result.bypass_reason == "budget_deferred"
     assert result.budget_mode == "deferred"
+
+
+def test_optimize_prompt_routes_opus_task_to_opus_in_normal_mode() -> None:
+    """weekly_review must resolve to opus when budget is normal."""
+    with patch("integrations.token_optimizer.SupabaseService") as mock_db_cls:
+        mock_db = MagicMock()
+        mock_db.fetch_all.return_value = []
+        mock_db_cls.return_value = mock_db
+        optimizer = TokenOptimizer()
+
+    result = optimizer.optimize_prompt(
+        prompt="Generate the weekly review for all agents.",
+        task_type="weekly_review",
+    )
+    assert result.selected_model == "opus"
+    assert result.needs_ai is True
+
+
+def test_optimize_prompt_routes_sonnet_task_to_sonnet_in_normal_mode() -> None:
+    """lead_qualification must resolve to sonnet when budget is normal."""
+    with patch("integrations.token_optimizer.SupabaseService") as mock_db_cls:
+        mock_db = MagicMock()
+        mock_db.fetch_all.return_value = []
+        mock_db_cls.return_value = mock_db
+        optimizer = TokenOptimizer()
+
+    result = optimizer.optimize_prompt(
+        prompt="Qualify this lead: John Smith wants to sell his house.",
+        task_type="lead_qualification",
+    )
+    assert result.selected_model == "sonnet"
+    assert result.needs_ai is True
+
+
+def test_optimize_prompt_atlas_and_commander_budgets_tracked() -> None:
+    """atlas and commander agents should have daily budgets defined."""
+    from integrations.token_optimizer import AGENT_DAILY_BUDGETS
+
+    assert "atlas" in AGENT_DAILY_BUDGETS
+    assert "commander" in AGENT_DAILY_BUDGETS
+    assert AGENT_DAILY_BUDGETS["atlas"] == 200
+    assert AGENT_DAILY_BUDGETS["commander"] == 200

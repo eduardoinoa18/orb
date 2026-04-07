@@ -37,6 +37,10 @@ def _get_client() -> Client:
     return Client(account_sid, auth_token)
 
 
+# Public alias used by modules that need the raw client (e.g. whatsapp_commander).
+get_twilio_client = _get_client
+
+
 def send_sms(
     to: str,
     message: str,
