@@ -29,7 +29,13 @@ class SupabaseService:
     """Small helper class for common database operations."""
 
     def __init__(self) -> None:
-        self.client = get_supabase_client()
+        self._client: Client | None = None
+
+    @property
+    def client(self) -> Client:
+        if self._client is None:
+            self._client = get_supabase_client()
+        return self._client
 
     def fetch_all(self, table_name: str, filters: dict[str, Any] | None = None) -> list[dict[str, Any]]:
         """Reads rows from a table and optionally applies equality filters."""
