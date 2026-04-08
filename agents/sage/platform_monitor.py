@@ -24,12 +24,26 @@ class PlatformMonitor:
     def monitor_platform_health(self) -> dict[str, Any]:
         """Checks latency/error/cost/webhooks and returns health diagnosis."""
         dependency_health = self._check_dependency_health()
+        database_connected = self._check_database_connected()
+
+        # Avoid repeated failing DB reads when permissions are unavailable.
+        if database_connected:
+            api_response_ms = self._estimate_api_response_time_ms()
+            error_rate_percent = self._estimate_error_rate_percent()
+            webhook_success_percent = self._estimate_webhook_success_rate()
+            daily_cost_dollars = self._estimate_daily_cost_dollars()
+        else:
+            api_response_ms = 350
+            error_rate_percent = 0.0
+            webhook_success_percent = 0.0
+            daily_cost_dollars = 0.0
+
         metrics = {
-            "api_response_ms": self._estimate_api_response_time_ms(),
-            "error_rate_percent": self._estimate_error_rate_percent(),
-            "database_connected": self._check_database_connected(),
-            "webhook_success_percent": self._estimate_webhook_success_rate(),
-            "daily_cost_dollars": self._estimate_daily_cost_dollars(),
+            "api_response_ms": api_response_ms,
+            "error_rate_percent": error_rate_percent,
+            "database_connected": database_connected,
+            "webhook_success_percent": webhook_success_percent,
+            "daily_cost_dollars": daily_cost_dollars,
             "dependency_health": dependency_health,
         }
 
@@ -52,19 +66,22 @@ class PlatformMonitor:
         diagnosis = self._diagnose(unhealthy, metrics)
         severity = "critical" if any("Database" in x or "exceeds" in x for x in unhealthy) else ("high" if unhealthy else "normal")
 
-        self.db.log_activity(
-            agent_id=None,
-            owner_id=None,
-            action_type="sage_platform_monitor",
-            description="Sage completed 30-minute platform health scan.",
-            cost_cents=0,
-            outcome="healthy" if not unhealthy else "attention_needed",
-            metadata={
-                "metrics": metrics,
-                "diagnosis": diagnosis,
-                "severity": severity,
-            },
-        )
+        try:
+            self.db.log_activity(
+                agent_id=None,
+                owner_id=None,
+                action_type="sage_platform_monitor",
+                description="Sage completed 30-minute platform health scan.",
+                cost_cents=0,
+                outcome="healthy" if not unhealthy else "attention_needed",
+                metadata={
+                    "metrics": metrics,
+                    "diagnosis": diagnosis,
+                    "severity": severity,
+                },
+            )
+        except DatabaseConnectionError as error:
+            logger.warning("Skipping Sage activity log write because database is unavailable: %s", error)
 
         return {
             "status": "healthy" if not unhealthy else "attention_needed",
