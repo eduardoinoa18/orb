@@ -4,12 +4,16 @@ The functions in this file provide a small wrapper around the Supabase client
 so the rest of the codebase can perform common operations in one place.
 """
 
+import logging
 from typing import Any
 
 from supabase import Client, create_client
 
 from config.settings import get_settings
 from integrations.ws_broadcaster import dispatch_agent_action
+
+
+logger = logging.getLogger("orb.database")
 
 
 class DatabaseConnectionError(RuntimeError):
@@ -30,6 +34,8 @@ class SupabaseService:
 
     def __init__(self) -> None:
         self._client: Client | None = None
+        self._fallback_owner_id: str | None = None
+        self._fallback_owner_checked = False
 
     @property
     def client(self) -> Client:
@@ -131,8 +137,9 @@ class SupabaseService:
         }
         if agent_id:
             payload["agent_id"] = agent_id
-        if owner_id:
-            payload["owner_id"] = owner_id
+        resolved_owner_id = owner_id or self._get_fallback_owner_id()
+        if resolved_owner_id:
+            payload["owner_id"] = resolved_owner_id
         if outcome is not None:
             payload["outcome"] = outcome
         if metadata is not None:
@@ -147,6 +154,10 @@ class SupabaseService:
                 payload_without_metadata = dict(payload)
                 payload_without_metadata.pop("metadata", None)
                 row = self.insert_one("activity_log", payload_without_metadata)
+            elif "null value in column \"owner_id\"" in message and "activity_log" in message:
+                # Some installations enforce owner_id NOT NULL while system logs are owner-agnostic.
+                logger.warning("Skipping activity_log insert because no owner_id could be resolved.")
+                row = payload
             else:
                 raise
 
@@ -166,3 +177,19 @@ class SupabaseService:
         )
 
         return row
+
+    def _get_fallback_owner_id(self) -> str | None:
+        """Return a cached owner id for system-level logs when no owner is provided."""
+        if self._fallback_owner_checked:
+            return self._fallback_owner_id
+
+        self._fallback_owner_checked = True
+        try:
+            response = self.client.table("owners").select("id").limit(1).execute()
+            rows = response.data or []
+            if rows and rows[0].get("id"):
+                self._fallback_owner_id = str(rows[0]["id"])
+        except Exception as error:
+            logger.debug("Could not resolve fallback owner_id for activity logging: %s", error)
+
+        return self._fallback_owner_id
