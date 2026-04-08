@@ -16,6 +16,8 @@ than blocking the app from starting.
 
 from __future__ import annotations
 
+import base64
+import json
 import secrets
 from functools import lru_cache
 from pathlib import Path
@@ -37,6 +39,34 @@ def _looks_placeholder(value: str) -> bool:
         return False
     marker_words = ("placeholder", "replace", "changeme", "your_", "your-", "insert_")
     return any(word in lowered for word in marker_words)
+
+
+def _is_probably_service_role_key(value: str) -> bool:
+    """Best-effort check that SUPABASE_SERVICE_KEY is a privileged key.
+
+    Accepts both modern secret keys (sb_secret_...) and legacy JWT keys
+    whose payload role claim is service_role.
+    """
+    token = (value or "").strip()
+    if not token:
+        return False
+
+    # Modern Supabase secret key format
+    if token.startswith("sb_secret_"):
+        return True
+
+    # Legacy JWT format: header.payload.signature
+    parts = token.split(".")
+    if len(parts) != 3:
+        return False
+
+    try:
+        payload_b64 = parts[1]
+        padding = "=" * (-len(payload_b64) % 4)
+        payload = json.loads(base64.urlsafe_b64decode(payload_b64 + padding).decode("utf-8"))
+        return payload.get("role") == "service_role"
+    except Exception:
+        return False
 
 
 class Settings(BaseSettings):
@@ -164,6 +194,9 @@ class Settings(BaseSettings):
             missing.append("SUPABASE_SERVICE_KEY")
         if not self.supabase_anon_key.strip():
             missing.append("SUPABASE_ANON_KEY")
+
+        if self.supabase_service_key.strip() and not _is_probably_service_role_key(self.supabase_service_key):
+            missing.append("SUPABASE_SERVICE_KEY (must be service_role or sb_secret_ key)")
 
         # Auto-generate JWT secret if missing (non-production)
         if not self.jwt_secret_key.strip():
