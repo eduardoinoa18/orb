@@ -96,7 +96,14 @@ alter table commander_config add column if not exists approval_rules jsonb defau
 alter table commander_config add column if not exists persona text default '';
 alter table commander_config add column if not exists training_examples jsonb default '[]'::jsonb;
 
--- ── 8. Indexes ──────────────────────────────────────────────────────────────
+-- ── 8. Ensure columns exist (handles tables created by an older schema) ──────
+alter table owner_integrations       add column if not exists provider_slug text not null default '';
+alter table integration_credentials  add column if not exists provider_slug text not null default '';
+alter table integration_credentials  add column if not exists field_name    text not null default '';
+alter table integration_sync_logs    add column if not exists provider_slug text not null default '';
+alter table agent_settings           add column if not exists agent_slug    text not null default '';
+
+-- ── 9. Indexes ───────────────────────────────────────────────────────────────
 create index if not exists idx_owner_integrations_owner_id on owner_integrations(owner_id);
 create index if not exists idx_owner_integrations_slug on owner_integrations(provider_slug);
 create index if not exists idx_integration_credentials_owner_id on integration_credentials(owner_id);
@@ -106,7 +113,7 @@ create index if not exists idx_integration_sync_logs_slug on integration_sync_lo
 create index if not exists idx_agent_settings_owner_id on agent_settings(owner_id);
 create index if not exists idx_agent_settings_slug on agent_settings(agent_slug);
 
--- ── 9. Seed Integration Providers ──────────────────────────────────────────
+-- ── 10. Seed Integration Providers ─────────────────────────────────────────
 insert into integration_providers (slug, name, category, auth_type, description, docs_url, logo_emoji, required_fields, optional_fields)
 values
     ('anthropic',     'Anthropic Claude',     'ai',          'api_key', 'Powers all Commander and agent reasoning', 'https://console.anthropic.com', '🤖', '["anthropic_api_key"]', '[]'),
@@ -123,7 +130,7 @@ values
     ('sentry',        'Sentry',               'monitoring',  'api_key', 'Error tracking and performance monitoring', 'https://sentry.io', '🔍', '["sentry_dsn"]', '[]')
 on conflict (slug) do nothing;
 
--- ── 10. RLS Policies (Enable for production) ─────────────────────────────────
+-- ── 11. RLS Policies (Enable for production) ────────────────────────────────
 -- Uncomment these after verifying your auth flow works
 -- alter table owners enable row level security;
 -- alter table agents enable row level security;
