@@ -52,7 +52,7 @@ def run_schema_checks() -> list[SchemaCheck]:
         )
 
     try:
-        db.client.table("owner_integrations").select("owner_id,integration_key,status").limit(1).execute()
+        db.client.table("owner_integrations").select("owner_id,provider_slug,status").limit(1).execute()
         checks.append(
             SchemaCheck(
                 label="owner_integrations table",
@@ -69,14 +69,12 @@ def run_schema_checks() -> list[SchemaCheck]:
                 fix_sql=(
                     "CREATE TABLE IF NOT EXISTS public.owner_integrations (\n"
                     "  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),\n"
-                    "  owner_id text NOT NULL,\n"
-                    "  integration_key text NOT NULL,\n"
-                    "  status text NOT NULL DEFAULT 'pending',\n"
-                    "  connection_mode text NOT NULL DEFAULT 'skip',\n"
-                    "  connected_at timestamptz,\n"
+                    "  owner_id uuid REFERENCES owners(id) ON DELETE CASCADE,\n"
+                    "  provider_slug text NOT NULL,\n"
+                    "  status text NOT NULL DEFAULT 'disconnected',\n"
                     "  created_at timestamptz NOT NULL DEFAULT now(),\n"
                     "  updated_at timestamptz NOT NULL DEFAULT now(),\n"
-                    "  UNIQUE(owner_id, integration_key)\n"
+                    "  UNIQUE(owner_id, provider_slug)\n"
                     ");"
                 ),
             )

@@ -96,6 +96,18 @@ alter table commander_config add column if not exists approval_rules jsonb defau
 alter table commander_config add column if not exists persona text default '';
 alter table commander_config add column if not exists training_examples jsonb default '[]'::jsonb;
 
+-- ── 7b. Platform Settings (encrypted key-value store) ───────────────────────
+create table if not exists platform_settings (
+    id          uuid primary key default gen_random_uuid(),
+    key         text not null unique,
+    value       text not null,
+    description text default '',
+    category    text default 'general',
+    owner_id    text default '',
+    created_at  timestamptz default now(),
+    updated_at  timestamptz default now()
+);
+
 -- ── 8. Ensure columns exist (handles tables created by an older schema) ──────
 alter table owner_integrations       add column if not exists provider_slug text not null default '';
 alter table integration_credentials  add column if not exists provider_slug text not null default '';
