@@ -42,7 +42,6 @@ from app.api.routes import (
     rex,
     sage,
     superadmin,
-    test_routes,
     trading,
     websocket,
     webhooks,
@@ -141,6 +140,7 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,
+    allow_origin_regex=r"https://.*\.vercel\.app",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -539,4 +539,3 @@ app.include_router(wholesale.router)
 app.include_router(superadmin.router)
 app.include_router(websocket.router)
 app.include_router(webhooks.router)
-app.include_router(test_routes.router)

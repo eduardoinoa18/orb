@@ -230,11 +230,19 @@ class Settings(BaseSettings):
     @property
     def cors_origins(self) -> list[str]:
         production_origins = {
+            # Custom domain
             f"https://{self.platform_domain}",
             f"http://{self.platform_domain}",
             f"https://www.{self.platform_domain}",
+            # Vercel preview and production deployments
+            "https://orb-landing.vercel.app",
+            "https://www.orb-landing.vercel.app",
+            # Railway backend itself (for same-origin calls)
+            "https://orb-platform.up.railway.app",
         }
-        return list(dict.fromkeys([*self.allowed_local_origins, *production_origins]))
+        # Also allow any *.vercel.app subdomain (Vercel preview URLs)
+        extra = [o for o in self.allowed_local_origins]
+        return list(dict.fromkeys([*extra, *production_origins]))
 
     # ── Runtime helpers ───────────────────────────────────────────────────────
     def require(self, key_name: str) -> str:
@@ -277,7 +285,7 @@ class Settings(BaseSettings):
             return False
 
     def integration_status(self) -> dict[str, bool]:
-        """Returns a dict of integration name → configured status for the UI."""
+        """Returns a dict of integration name -> configured status for the UI."""
         return {
             "anthropic": self.is_configured("anthropic_api_key"),
             "openai": self.is_configured("openai_api_key"),
@@ -294,5 +302,6 @@ class Settings(BaseSettings):
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
-    """Returns cached settings — env parsing happens once per process."""
+    """Returns cached settings; env parsing happens once per process."""
     return Settings()
+      

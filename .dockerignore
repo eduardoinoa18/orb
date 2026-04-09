@@ -1,11 +1,42 @@
+# Secrets
 .env
+.env.*
+
+# Git
 .git
 .gitignore
+
+# Python cache (never needed in image)
 __pycache__
 *.pyc
+*.pyo
+*.pyd
+*.egg-info
+
+# Virtual env (Docker installs deps fresh from requirements.txt)
 .venv
 venv
-*.egg-info
+env
+
+# Test artifacts
 .pytest_cache
 tests/
+coverage.xml
+.coverage
+htmlcov/
+
+# Docs (not needed at runtime)
 *.md
+docs/
+
+# Old platform directory (superseded by app/)
+platform/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Scripts (deploy utilities, not needed at runtime)
+scripts/
