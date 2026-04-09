@@ -367,9 +367,9 @@ def commander_message(payload: CommanderMessagePayload) -> dict[str, Any]:
 
 
 @router.get("/briefing/{owner_id}")
-def commander_briefing(owner_id: str) -> dict[str, Any]:
+async def commander_briefing(owner_id: str) -> dict[str, Any]:
     """Returns the owner's morning briefing, generating it on-demand."""
-    briefing = commander_brain.morning_briefing(owner_id)
+    briefing = await commander_brain.morning_briefing(owner_id)
     return {"owner_id": owner_id, "briefing": briefing, "generated_at": datetime.now(timezone.utc).isoformat()}
 
 

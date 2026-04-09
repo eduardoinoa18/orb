@@ -23,51 +23,47 @@ def log_activity(
     cost_cents: int = 0,
     needs_approval: bool = False,
     request_id: str | None = None,
+    owner_id: str | None = None,
 ) -> dict[str, Any]:
     """
     Writes a single activity log entry to the database.
 
+    Routes through SupabaseService.log_activity() so that background tasks
+    (schedulers, Aria, Sage) automatically resolve an owner_id via the
+    fallback lookup when none is explicitly supplied.
+
     Args:
-        agent_id:       UUID of the agent that performed the action (can be None
-                        for platform-level events like startup checks)
-        action_type:    Short category tag: "sms", "call", "claude", "trade",
-                        "email", "lead", "task", "error"
+        agent_id:       UUID of the agent (None for platform-level events)
+        action_type:    Short tag: "sms", "call", "claude", "trade", "error"
         description:    Human-readable description of what happened
-        outcome:        Optional result: "sent", "failed", "approved", "rejected"
-        cost_cents:     Estimated cost in US cents (1 cent = $0.01)
-        needs_approval: Set True for actions that require your review before
-                        they go through (e.g. drafting an email to send)
-
-    Returns the inserted database row as a dict.
-    Logs a warning and returns a partial dict if the database is not yet set up.
+        outcome:        Optional result: "sent", "failed", "approved"
+        cost_cents:     Estimated cost in US cents
+        needs_approval: True if this action requires owner review
+        request_id:     HTTP request ID for tracing (optional)
+        owner_id:       Explicit owner_id — if None the fallback resolver is used
     """
-    payload: dict[str, Any] = {
-        "action_type": action_type,
-        "description": description,
-        "cost_cents": cost_cents,
-        "needs_approval": needs_approval,
-    }
-
-    if agent_id:
-        payload["agent_id"] = agent_id
-    if outcome:
-        payload["outcome"] = outcome
-    if request_id:
-        payload["request_id"] = request_id
-
     try:
         db = SupabaseService()
-        row = db.insert_one("activity_log", payload)
-        logger.info(
-            "Activity logged — type=%s cost=%d¢ needs_approval=%s",
-            action_type, cost_cents, needs_approval,
+        metadata: dict[str, Any] | None = {"request_id": request_id} if request_id else None
+        row = db.log_activity(
+            agent_id=agent_id,
+            owner_id=owner_id,
+            action_type=action_type,
+            description=description,
+            cost_cents=cost_cents,
+            outcome=outcome,
+            needs_approval=needs_approval,
+            metadata=metadata,
         )
         return row
     except DatabaseConnectionError as error:
-        # Don't crash the whole request just because logging failed.
-        # This can happen if Supabase isn't connected yet.
         logger.warning("Failed to log activity to database: %s", error)
-        return {**payload, "id": None, "warning": "Database not connected — log not saved"}
+        return {
+            "action_type": action_type,
+            "description": description,
+            "id": None,
+            "warning": "Database not connected — log not saved",
+        }
 
 
 def get_recent_activity(
@@ -80,14 +76,11 @@ def get_recent_activity(
     Args:
         agent_id:  Filter to a specific agent's activity (None = all agents)
         limit:     Maximum number of rows to return
-
-    Returns a list of activity log dicts.
     """
     try:
         db = SupabaseService()
         filters = {"agent_id": agent_id} if agent_id else {}
         rows = db.fetch_all("activity_log", filters)
-        # Sort newest first (Supabase doesn't guarantee order without ORDER BY)
         rows.sort(key=lambda r: r.get("created_at", ""), reverse=True)
         return rows[:limit]
     except DatabaseConnectionError as error:

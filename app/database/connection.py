@@ -150,36 +150,38 @@ class SupabaseService:
         except DatabaseConnectionError as error:
             message = str(error).lower()
             if "metadata" in message and "activity_log" in message and "metadata" in payload:
-                # Backward-compatible fallback for environments where activity_log has no metadata column yet.
-                payload_without_metadata = dict(payload)
-                payload_without_metadata.pop("metadata", None)
-                row = self.insert_one("activity_log", payload_without_metadata)
-            elif "null value in column \"owner_id\"" in message and "activity_log" in message:
-                # Some installations enforce owner_id NOT NULL while system logs are owner-agnostic.
+                # Backward-compatible fallback: retry without metadata column
+                payload_without_metadata = {k: v for k, v in payload.items() if k != "metadata"}
+                try:
+                    row = self.insert_one("activity_log", payload_without_metadata)
+                except DatabaseConnectionError as inner_error:
+                    logger.warning("Failed to log activity to database: %s", inner_error)
+                    return {**payload, "id": None}
+            elif "null value in column" in message and "owner_id" in message:
+                # owner_id is required but could not be resolved — skip silently
                 logger.warning("Skipping activity_log insert because no owner_id could be resolved.")
-                row = payload
+                return {**payload, "id": None}
             else:
-                raise
-
-        # Push a live dashboard event for the animated office scene.
-        agent_name = ""
-        if isinstance(metadata, dict):
-            agent_name = str(metadata.get("agent_name") or "")
-        if not agent_name and agent_id:
-            agent_name = str(agent_id)
-
-        dispatch_agent_action(
-            agent_id=str(agent_id or "system"),
-            agent_name=agent_name,
-            action_type=action_type,
-            message=description,
-            outcome=outcome,
-        )
+                logger.warning("Failed to log activity to database: %s", error)
+                return {**payload, "id": None}
+        else:
+            dispatch_agent_action(
+                agent_id=str(payload.get("agent_id") or "system"),
+                agent_name=str(payload.get("agent_id") or "system"),
+                action_type=action_type,
+                message=description,
+                outcome=outcome,
+            )
+            return row
 
         return row
 
     def _get_fallback_owner_id(self) -> str | None:
-        """Return a cached owner id for system-level logs when no owner is provided."""
+        """Returns the first owner_id from the owners table, cached per instance.
+
+        Used by background tasks (schedulers) that run without a request context
+        and therefore have no authenticated owner_id available.
+        """
         if self._fallback_owner_checked:
             return self._fallback_owner_id
 
@@ -187,9 +189,12 @@ class SupabaseService:
         try:
             response = self.client.table("owners").select("id").limit(1).execute()
             rows = response.data or []
-            if rows and rows[0].get("id"):
+            if rows:
                 self._fallback_owner_id = str(rows[0]["id"])
+                logger.debug("Resolved fallback owner_id: %s", self._fallback_owner_id)
+            else:
+                logger.warning("No owners found in database — background tasks cannot log activity.")
         except Exception as error:
-            logger.debug("Could not resolve fallback owner_id for activity logging: %s", error)
+            logger.warning("Could not resolve fallback owner_id: %s", error)
 
         return self._fallback_owner_id
