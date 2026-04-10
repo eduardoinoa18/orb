@@ -560,6 +560,53 @@ def dashboard_overview() -> dict[str, Any]:
     }
 
 
+@router.get("/data")
+def dashboard_data() -> dict[str, Any]:
+    """Thin adapter that returns the shape the frontend DashboardData type expects.
+
+    Maps from the richer ``/overview`` response to the flat structure
+    used by orb-landing's ``fetchDashboardData()``.
+    """
+    overview = dashboard_overview()
+    agents_list = overview.get("agents") or []
+    activity_feed = overview.get("activity_feed") or []
+    approval_queue = overview.get("approval_queue") or []
+    stats = overview.get("stats") or {}
+
+    active_agents = sum(1 for a in agents_list if a.get("status") == "active")
+
+    recent_activity = [
+        {
+            "id": str(row.get("id") or ""),
+            "action_type": str(row.get("action_type") or ""),
+            "description": str(row.get("description") or ""),
+            "created_at": str(row.get("created_at") or ""),
+            "needs_approval": bool(row.get("needs_approval")),
+            "cost_cents": int(row.get("cost_cents") or 0),
+        }
+        for row in activity_feed[:20]
+    ]
+
+    return {
+        "active_agents": active_agents,
+        "pending_approvals": len(approval_queue),
+        "daily_cost_dollars": stats.get("cost_today_dollars", 0.0),
+        "recent_activity": recent_activity,
+        "agents": [
+            {
+                "id": a.get("id"),
+                "name": a.get("name", ""),
+                "role": a.get("role", ""),
+                "status": a.get("status", ""),
+                "last_action": a.get("last_action"),
+            }
+            for a in agents_list
+        ],
+        "stats": stats,
+        "db_status": "connected",
+    }
+
+
 @router.get("/pipeline")
 def dashboard_pipeline() -> dict[str, Any]:
     """Returns lead pipeline grouped by status for kanban-style UI."""
