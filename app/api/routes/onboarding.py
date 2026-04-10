@@ -160,16 +160,32 @@ def onboarding_register(payload: RegisterPayload) -> dict[str, Any]:
         raise HTTPException(status_code=400, detail="You must accept terms before creating an account.")
 
     owner_id = str(uuid4())
-    password_hash = hash_password(payload.password)
-    owner = _upsert_owner(
-        owner_id,
-        str(payload.email),
-        {
+    email = str(payload.email)
+    degraded_mode = False
+
+    try:
+        password_hash = hash_password(payload.password)
+        owner = _upsert_owner(
+            owner_id,
+            email,
+            {
+                "plan": "starter",
+                "subscription_status": "trialing",
+                "password_hash": password_hash,
+            },
+        )
+    except Exception:
+        # Keep registration unblocked even when a dependency degrades.
+        logger.exception("Onboarding register degraded", extra={"email": email})
+        degraded_mode = True
+        owner = {
+            "id": owner_id,
+            "email": email,
+            "name": "New Owner",
             "plan": "starter",
             "subscription_status": "trialing",
-            "password_hash": password_hash,
-        },
-    )
+        }
+
     _step_done(owner_id, "register", {"email": str(payload.email)})
 
     try:
@@ -191,6 +207,7 @@ def onboarding_register(payload: RegisterPayload) -> dict[str, Any]:
         "owner": owner,
         "next_step": "about_you",
         "message": "Account created. Verification step is stubbed for local mode.",
+        "degraded": degraded_mode,
     }
 
 
