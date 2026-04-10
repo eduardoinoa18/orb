@@ -11,12 +11,17 @@ def test_onboarding_register_and_status() -> None:
         json={
             "email": "owner@example.com",
             "password": "very-strong-pass",
+            "name": "Owner Name",
             "accept_terms": True,
         },
     )
     assert response.status_code == 200
     payload = response.json()
     assert payload["owner_id"]
+    assert payload["token"]
+    assert payload["email"] == "owner@example.com"
+    assert payload["name"] == "Owner Name"
+    assert payload["plan"] == "starter"
     assert payload["next_step"] == "about_you"
 
     status = client.get(f"/onboarding/status/{payload['owner_id']}")
@@ -39,6 +44,7 @@ def test_onboarding_register_survives_email_failure() -> None:
     assert response.status_code == 200
     payload = response.json()
     assert payload["owner_id"]
+    assert payload["token"]
     assert payload["next_step"] == "about_you"
 
 
@@ -56,6 +62,7 @@ def test_onboarding_register_survives_unexpected_dependency_failure() -> None:
     assert response.status_code == 200
     payload = response.json()
     assert payload["owner_id"]
+    assert payload["token"]
     assert payload["next_step"] == "about_you"
     assert payload["degraded"] is True
 

@@ -52,6 +52,7 @@ class RegisterPayload(BaseModel):
     email: EmailStr
     password: str = Field(min_length=8)
     accept_terms: bool
+    name: str | None = Field(default=None, min_length=1)
 
 
 class AboutPayload(BaseModel):
@@ -162,6 +163,7 @@ def onboarding_register(payload: RegisterPayload) -> dict[str, Any]:
     owner_id = str(uuid4())
     email = str(payload.email)
     degraded_mode = False
+    owner_name = (payload.name or "").strip() or "New Owner"
 
     try:
         password_hash = hash_password(payload.password)
@@ -169,6 +171,8 @@ def onboarding_register(payload: RegisterPayload) -> dict[str, Any]:
             owner_id,
             email,
             {
+                "full_name": owner_name,
+                "name": owner_name,
                 "plan": "starter",
                 "subscription_status": "trialing",
                 "password_hash": password_hash,
@@ -181,7 +185,8 @@ def onboarding_register(payload: RegisterPayload) -> dict[str, Any]:
         owner = {
             "id": owner_id,
             "email": email,
-            "name": "New Owner",
+            "full_name": owner_name,
+            "name": owner_name,
             "plan": "starter",
             "subscription_status": "trialing",
         }
@@ -202,8 +207,14 @@ def onboarding_register(payload: RegisterPayload) -> dict[str, Any]:
         # Keep registration available even if outbound email provider fails.
         logger.exception("Welcome email failed for onboarding registration", extra={"email": str(payload.email)})
 
+    token = _make_jwt(owner_id, email)
+
     return {
+        "token": token,
         "owner_id": owner_id,
+        "email": email,
+        "name": owner.get("full_name") or owner.get("name") or owner_name,
+        "plan": owner.get("plan") or "starter",
         "owner": owner,
         "next_step": "about_you",
         "message": "Account created. Verification step is stubbed for local mode.",
