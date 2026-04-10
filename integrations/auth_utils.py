@@ -12,6 +12,7 @@ imported by routes, tests, or CLI scripts with no side effects.
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import hmac
 import logging
@@ -34,6 +35,8 @@ logger = logging.getLogger("orb.auth")
 _MAX_ATTEMPTS = 5          # login failures before lockout
 _LOCKOUT_SECONDS = 900     # 15-minute lockout window
 _API_KEY_PREFIX_LENGTH = 8  # chars shown to user (e.g. "orb_k1ab")
+_PBKDF2_ITERATIONS = 600_000
+_PBKDF2_PREFIX = "pbkdf2_sha256"
 
 
 # ---------------------------------------------------------------------------
@@ -46,9 +49,16 @@ def hash_password(plain: str) -> str:
     Returns a 60-char string safe to store in the database.
     Never store the plaintext password.
     """
-    from passlib.context import CryptContext
-    ctx = _get_crypt_context()
-    return ctx.hash(plain)
+    try:
+        ctx = _get_crypt_context()
+        return ctx.hash(plain)
+    except Exception as exc:
+        logger.warning("Falling back to PBKDF2 password hashing: %s", exc)
+        salt = os.urandom(16)
+        digest = hashlib.pbkdf2_hmac("sha256", plain.encode("utf-8"), salt, _PBKDF2_ITERATIONS)
+        salt_b64 = base64.b64encode(salt).decode("ascii")
+        digest_b64 = base64.b64encode(digest).decode("ascii")
+        return f"{_PBKDF2_PREFIX}${_PBKDF2_ITERATIONS}${salt_b64}${digest_b64}"
 
 
 def verify_password(plain: str, hashed: str) -> bool:
@@ -57,6 +67,8 @@ def verify_password(plain: str, hashed: str) -> bool:
     Uses a constant-time comparison internally to prevent timing attacks.
     """
     try:
+        if hashed.startswith(f"{_PBKDF2_PREFIX}$"):
+            return _verify_pbkdf2_password(plain, hashed)
         ctx = _get_crypt_context()
         return ctx.verify(plain, hashed)
     except Exception as exc:
@@ -69,6 +81,20 @@ def _get_crypt_context():
     """Cached CryptContext — building the bcrypt context is expensive."""
     from passlib.context import CryptContext
     return CryptContext(schemes=["bcrypt"], deprecated="auto", bcrypt__rounds=12)
+
+
+def _verify_pbkdf2_password(plain: str, hashed: str) -> bool:
+    """Verify stdlib PBKDF2 fallback hashes."""
+    try:
+        _, iterations_str, salt_b64, digest_b64 = hashed.split("$", 3)
+        iterations = int(iterations_str)
+        salt = base64.b64decode(salt_b64.encode("ascii"))
+        expected = base64.b64decode(digest_b64.encode("ascii"))
+        computed = hashlib.pbkdf2_hmac("sha256", plain.encode("utf-8"), salt, iterations)
+        return hmac.compare_digest(computed, expected)
+    except Exception as exc:
+        logger.warning("verify_pbkdf2_password error: %s", exc)
+        return False
 
 
 # ---------------------------------------------------------------------------

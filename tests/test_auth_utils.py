@@ -52,6 +52,27 @@ class TestPasswordHashing:
         h2 = hash_password("same-password")
         assert h1 != h2
 
+    def test_hash_falls_back_when_passlib_context_fails(self, monkeypatch):
+        monkeypatch.setattr(
+            "integrations.auth_utils._get_crypt_context",
+            lambda: (_ for _ in ()).throw(RuntimeError("bcrypt unavailable")),
+        )
+
+        hashed = hash_password("fallback-password")
+
+        assert hashed.startswith("pbkdf2_sha256$")
+        assert verify_password("fallback-password", hashed) is True
+
+    def test_verify_pbkdf2_wrong_password(self, monkeypatch):
+        monkeypatch.setattr(
+            "integrations.auth_utils._get_crypt_context",
+            lambda: (_ for _ in ()).throw(RuntimeError("bcrypt unavailable")),
+        )
+
+        hashed = hash_password("fallback-password")
+
+        assert verify_password("wrong-password", hashed) is False
+
 
 # ---------------------------------------------------------------------------
 # TOTP / MFA
