@@ -25,6 +25,23 @@ def test_onboarding_register_and_status() -> None:
     assert "register" in status_payload["steps"]
 
 
+def test_onboarding_register_survives_email_failure() -> None:
+    with patch("app.api.routes.onboarding.send_resend_email", side_effect=RuntimeError("email provider down")):
+        response = client.post(
+            "/onboarding/register",
+            json={
+                "email": "owner-email-fail@example.com",
+                "password": "very-strong-pass",
+                "accept_terms": True,
+            },
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["owner_id"]
+    assert payload["next_step"] == "about_you"
+
+
 def test_onboarding_happy_path_trial_flow() -> None:
     register = client.post(
         "/onboarding/register",

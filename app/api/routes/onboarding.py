@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any
 from uuid import uuid4
@@ -25,6 +26,7 @@ from integrations.auth_utils import (
 from integrations.resend_client import send_resend_email
 
 router = APIRouter(prefix="/onboarding", tags=["onboarding"])
+logger = logging.getLogger("orb.api.onboarding")
 
 
 def _make_jwt(owner_id: str, email: str) -> str:
@@ -170,15 +172,19 @@ def onboarding_register(payload: RegisterPayload) -> dict[str, Any]:
     )
     _step_done(owner_id, "register", {"email": str(payload.email)})
 
-    send_resend_email(
-        to_email=str(payload.email),
-        subject="I'm online and ready - your Commander",
-        html=(
-            "<p>Welcome to ORB.</p>"
-            "<p>Your Commander is online and ready to coordinate your team.</p>"
-            "<p>Next step: finish onboarding and send your first command.</p>"
-        ),
-    )
+    try:
+        send_resend_email(
+            to_email=str(payload.email),
+            subject="I'm online and ready - your Commander",
+            html=(
+                "<p>Welcome to ORB.</p>"
+                "<p>Your Commander is online and ready to coordinate your team.</p>"
+                "<p>Next step: finish onboarding and send your first command.</p>"
+            ),
+        )
+    except Exception:
+        # Keep registration available even if outbound email provider fails.
+        logger.exception("Welcome email failed for onboarding registration", extra={"email": str(payload.email)})
 
     return {
         "owner_id": owner_id,
