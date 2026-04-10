@@ -15,7 +15,7 @@ from typing import Callable
 from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.docs import get_swagger_ui_html, get_swagger_ui_oauth2_redirect_html
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from jose import JWTError, jwt
 from swagger_ui_bundle import swagger_ui_path
@@ -205,6 +205,8 @@ async def jwt_auth_middleware(request: Request, call_next: Callable):
         "/health",
         "/docs",
         "/openapi.json",
+        "/dashboard",
+        "/dashboard/data",
         "/favicon.ico",
         # Auth flows — must be public for redirect to work
         "/login",
@@ -307,6 +309,12 @@ def custom_swagger_ui_html() -> HTMLResponse:
 @app.get(app.swagger_ui_oauth2_redirect_url, include_in_schema=False)
 def swagger_ui_redirect() -> HTMLResponse:
     return get_swagger_ui_oauth2_redirect_html()
+
+
+@app.get("/favicon.ico", include_in_schema=False)
+def favicon() -> RedirectResponse:
+    """Serve a stable favicon path without auth."""
+    return RedirectResponse(url="/docs-assets/favicon-32x32.png", status_code=307)
 
 
 @app.get("/dashboard", response_class=HTMLResponse)
