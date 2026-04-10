@@ -1555,6 +1555,18 @@ def _page(title: str, body: str) -> str:
       if (drawer) drawer.classList.remove('open');
       if (el) el.classList.toggle('open');
     }}
+
+    function orbScrollTo(sectionId) {{
+      const el = document.getElementById(sectionId);
+      if (el) {{
+        el.scrollIntoView({{ behavior: 'smooth', block: 'start' }});
+        return;
+      }}
+
+      if (sectionId) {{
+        window.location.href = `/dashboard#${{encodeURIComponent(sectionId)}}`;
+      }}
+    }}
   </script>
 </body>
 </html>

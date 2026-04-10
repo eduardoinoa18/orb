@@ -64,17 +64,17 @@ logger = logging.getLogger("orb.api")
 _DEFAULT_CSP = (
     "default-src 'self'; "
     "script-src 'self' 'unsafe-inline'; "
-    "style-src 'self' 'unsafe-inline'; "
+    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
     "img-src 'self' data:; "
-    "font-src 'self' data:;"
+    "font-src 'self' data: https://fonts.gstatic.com;"
 )
 
 _DOCS_CSP = (
     "default-src 'self'; "
     "script-src 'self' 'unsafe-inline'; "
-    "style-src 'self' 'unsafe-inline'; "
+    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
     "img-src 'self' data:; "
-    "font-src 'self' data:;"
+    "font-src 'self' data: https://fonts.gstatic.com;"
 )
 
 
@@ -205,6 +205,7 @@ async def jwt_auth_middleware(request: Request, call_next: Callable):
         "/health",
         "/docs",
         "/openapi.json",
+        "/favicon.ico",
         # Auth flows — must be public for redirect to work
         "/login",
         "/auth/google/start",
