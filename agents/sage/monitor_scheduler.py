@@ -71,6 +71,10 @@ class SageMonitorScheduler:
             logger.warning("Scheduler already running")
             return
 
+        if not self.settings.sage_monitor_enabled:
+            logger.info("Sage monitor scheduler disabled by configuration")
+            return
+
         self._stop_event.clear()
         self._thread = threading.Thread(target=self._polling_loop, daemon=True)
         self._thread.start()

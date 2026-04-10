@@ -104,13 +104,21 @@ def _looks_placeholder(value: str) -> bool:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Manage application startup/shutdown lifecycle hooks."""
-    aria_scheduler = AriaBriefingScheduler()
-    aria_scheduler.start()
-    app.state.aria_briefing_scheduler = aria_scheduler
+    if settings.aria_briefing_enabled:
+        aria_scheduler = AriaBriefingScheduler()
+        aria_scheduler.start()
+        app.state.aria_briefing_scheduler = aria_scheduler
+    else:
+        app.state.aria_briefing_scheduler = None
+        logger.info("Aria briefing scheduler disabled for lean launch")
 
-    sage_scheduler = SageMonitorScheduler()
-    sage_scheduler.start()
-    app.state.sage_monitor_scheduler = sage_scheduler
+    if settings.sage_monitor_enabled:
+        sage_scheduler = SageMonitorScheduler()
+        sage_scheduler.start()
+        app.state.sage_monitor_scheduler = sage_scheduler
+    else:
+        app.state.sage_monitor_scheduler = None
+        logger.info("Sage monitor scheduler disabled for lean launch")
     try:
         yield
     finally:

@@ -148,11 +148,11 @@ class Settings(BaseSettings):
     # ── Feature flags ─────────────────────────────────────────────────────────
     computer_use_enabled: bool = False
     computer_use_screenshot_dir: str = "artifacts/screenshots"
-    aria_briefing_enabled: bool = True
+    aria_briefing_enabled: bool = False
     aria_briefing_hour: int = 7
     aria_briefing_minute: int = 0
     aria_briefing_timezone: str = "America/New_York"
-    sage_monitor_enabled: bool = True
+    sage_monitor_enabled: bool = False
     sage_monitor_interval_minutes: int = 30
     token_cache_ttl_minutes: int = 1440
     whisper_enabled: bool = False
