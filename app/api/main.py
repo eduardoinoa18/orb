@@ -243,6 +243,11 @@ async def jwt_auth_middleware(request: Request, call_next: Callable):
         "/onboarding/status/",
     )
 
+    # OPTIONS (CORS preflight) must always pass through so the CORS middleware
+    # can respond with the appropriate Allow-Origin headers.
+    if request.method == "OPTIONS":
+        return await call_next(request)
+
     if request.url.path in public_paths or any(request.url.path.startswith(prefix) for prefix in public_prefixes):
         return await call_next(request)
 
