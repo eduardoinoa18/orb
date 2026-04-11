@@ -19,6 +19,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from jose import JWTError, jwt
 from swagger_ui_bundle import swagger_ui_path
+import re as _re
 
 from config.settings import get_settings
 from slowapi import _rate_limit_exceeded_handler
@@ -195,6 +196,22 @@ async def request_logging_middleware(request: Request, call_next: Callable):
     return response
 
 
+
+_CORS_ORIGIN_REGEX = _re.compile(r"https://.*\.vercel\.app$")
+
+
+def _apply_cors(request: Request, response: JSONResponse) -> None:
+    """Add CORS headers to early-return responses that bypass CORSMiddleware."""
+    origin = request.headers.get("origin", "")
+    if not origin:
+        return
+    allowed_origins = settings.cors_origins
+    if origin in allowed_origins or _CORS_ORIGIN_REGEX.match(origin):
+        response.headers["Access-Control-Allow-Origin"] = origin
+        response.headers["Access-Control-Allow-Credentials"] = "true"
+        response.headers["Vary"] = "Origin"
+
+
 @app.middleware("http")
 async def jwt_auth_middleware(request: Request, call_next: Callable):
     """Validates bearer tokens for protected routes while keeping health public."""
@@ -253,20 +270,24 @@ async def jwt_auth_middleware(request: Request, call_next: Callable):
 
     authorization = request.headers.get("Authorization", "")
     if not authorization.startswith("Bearer "):
-        return JSONResponse(
+        resp = JSONResponse(
             status_code=status.HTTP_401_UNAUTHORIZED,
             content={"detail": "Missing bearer token."},
         )
+        _apply_cors(request, resp)
+        return resp
 
     token = authorization.removeprefix("Bearer ").strip()
     try:
         payload = jwt.decode(token, settings.jwt_secret_key, algorithms=["HS256"])
         request.state.token_payload = payload
     except JWTError:
-        return JSONResponse(
+        resp = JSONResponse(
             status_code=status.HTTP_401_UNAUTHORIZED,
             content={"detail": "Invalid or expired token."},
         )
+        _apply_cors(request, resp)
+        return resp
 
     return await call_next(request)
 
