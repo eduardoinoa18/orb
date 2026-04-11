@@ -171,20 +171,20 @@ def get_integration_status(request: Request) -> dict[str, Any]:
         raise HTTPException(status_code=503, detail="Database unavailable") from error
 
     statuses = [
-        IntegrationStatus(
-            provider_slug=row.get("provider_slug", ""),
-            status=row.get("status", "disconnected"),
-            last_tested_at=row.get("last_tested_at"),
-            last_sync_at=row.get("last_sync_at"),
-            error_message=row.get("error_message"),
-        )
+        {
+            "slug": row.get("provider_slug", ""),
+            "status": row.get("status", "disconnected"),
+            "last_tested_at": row.get("last_tested_at"),
+            "last_sync_at": row.get("last_sync_at"),
+            "error_message": row.get("error_message"),
+        }
         for row in rows
     ]
 
-    return {"owner_id": owner_id, "statuses": statuses}
+    return statuses
 
 
-@router.post("/integrations/{provider_slug}/connect")
+@router.post("/{provider_slug}/connect")
 def connect_integration(provider_slug: str, payload: CredentialPayload, request: Request) -> dict[str, Any]:
     """Connect an integration by saving encrypted credentials."""
     owner_id = _get_owner_id(request)
@@ -276,7 +276,7 @@ def connect_integration(provider_slug: str, payload: CredentialPayload, request:
         raise HTTPException(status_code=503, detail="Database error") from error
 
 
-@router.delete("/integrations/{provider_slug}/disconnect")
+@router.delete("/{provider_slug}/disconnect")
 def disconnect_integration(provider_slug: str, request: Request) -> dict[str, Any]:
     """Disconnect an integration by removing all credentials."""
     owner_id = _get_owner_id(request)
@@ -317,7 +317,7 @@ def disconnect_integration(provider_slug: str, request: Request) -> dict[str, An
         raise HTTPException(status_code=503, detail="Database error") from error
 
 
-@router.post("/integrations/{provider_slug}/test", response_model=TestResult)
+@router.post("/{provider_slug}/test", response_model=TestResult)
 def test_integration(provider_slug: str, request: Request) -> TestResult:
     """Test connection to an integration by making a live API call."""
     owner_id = _get_owner_id(request)
@@ -419,7 +419,7 @@ def test_integration(provider_slug: str, request: Request) -> TestResult:
         raise HTTPException(status_code=503, detail="Database error") from error
 
 
-@router.get("/integrations/{provider_slug}/logs")
+@router.get("/{provider_slug}/logs")
 def get_sync_logs(provider_slug: str, request: Request) -> dict[str, Any]:
     """Get the last 20 sync log entries for an integration."""
     owner_id = _get_owner_id(request)

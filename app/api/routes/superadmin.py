@@ -245,3 +245,61 @@ def admin_feature_flag_update(
         "flag": rows[0],
         "updated_at": updates["updated_at"],
     }
+
+
+@router.get("/audit-log")
+def admin_audit_log(owner: dict[str, Any] = Depends(require_superadmin)) -> dict[str, Any]:
+    del owner
+    try:
+        db = SupabaseService()
+        rows = db.fetch_all("activity_log")
+    except DatabaseConnectionError as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
+
+    rows.sort(key=lambda r: str(r.get("created_at") or ""), reverse=True)
+    entries = [
+        {
+            "action_type": r.get("action_type") or "",
+            "description": r.get("description") or "",
+            "created_at": str(r.get("created_at") or ""),
+            "owner_id": str(r.get("owner_id") or ""),
+            "agent_id": str(r.get("agent_id") or ""),
+            "outcome": r.get("outcome") or "",
+        }
+        for r in rows[:200]
+    ]
+    return {
+        "count": len(entries),
+        "entries": entries,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+@router.get("/costs/summary")
+def admin_costs_summary(owner: dict[str, Any] = Depends(require_superadmin)) -> dict[str, Any]:
+    del owner
+    try:
+        db = SupabaseService()
+        rows = db.fetch_all("activity_log")
+    except DatabaseConnectionError as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
+
+    total_cents = sum(_safe_int(r.get("cost_cents")) for r in rows)
+    by_owner: dict[str, int] = {}
+    by_agent: dict[str, int] = {}
+    for r in rows:
+        oid = str(r.get("owner_id") or "")
+        aid = str(r.get("agent_id") or "")
+        cost = _safe_int(r.get("cost_cents"))
+        if oid:
+            by_owner[oid] = by_owner.get(oid, 0) + cost
+        if aid:
+            by_agent[aid] = by_agent.get(aid, 0) + cost
+
+    return {
+        "total_cost_cents": total_cents,
+        "total_cost_usd": round(total_cents / 100, 2),
+        "by_owner": [{"owner_id": k, "cost_cents": v} for k, v in sorted(by_owner.items(), key=lambda x: -x[1])[:50]],
+        "by_agent": [{"agent_id": k, "cost_cents": v} for k, v in sorted(by_agent.items(), key=lambda x: -x[1])[:50]],
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+    }
