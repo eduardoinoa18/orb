@@ -293,19 +293,23 @@ async def jwt_auth_middleware(request: Request, call_next: Callable):
 
 
 @app.exception_handler(HTTPException)
-async def http_exception_handler(_: Request, exc: HTTPException) -> JSONResponse:
+async def http_exception_handler(request: Request, exc: HTTPException) -> JSONResponse:
     """Returns a consistent JSON response for FastAPI HTTP exceptions."""
-    return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+    resp = JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+    _apply_cors(request, resp)
+    return resp
 
 
 @app.exception_handler(Exception)
-async def unhandled_exception_handler(_: Request, exc: Exception) -> JSONResponse:
+async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
     """Catches unexpected errors and returns a safe JSON response."""
     logger.exception("Unhandled application error: %s", exc)
-    return JSONResponse(
+    resp = JSONResponse(
         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
         content={"detail": "Internal server error."},
     )
+    _apply_cors(request, resp)
+    return resp
 
 
 @app.get("/", response_class=HTMLResponse)

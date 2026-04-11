@@ -44,7 +44,14 @@ def require_superadmin(request: Request) -> dict[str, Any]:
     """Dependency that blocks non-superadmin owners."""
     owner = get_current_owner(request)
     role = str(owner.get("role") or "user").strip().lower()
-    if not bool(owner.get("is_superadmin")) and role != "superadmin":
+    # Accept legacy "superadmin" DB role, is_superadmin flag, or JWT "master_owner" role
+    jwt_role = str(getattr(request.state, "token_payload", {}).get("role") or "").strip().lower()
+    is_admin = (
+        bool(owner.get("is_superadmin"))
+        or role in ("superadmin", "master_owner")
+        or jwt_role in ("superadmin", "master_owner")
+    )
+    if not is_admin:
         raise HTTPException(status_code=403, detail="Super admin access required.")
     return owner
 
