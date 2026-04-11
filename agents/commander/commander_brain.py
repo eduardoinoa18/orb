@@ -88,6 +88,23 @@ class CommanderBrain:
                     profile[key] = row.get(key)
         return profile
 
+    def _load_learned_skills(self, owner_id: str) -> list[dict[str, Any]]:
+        """Loads Commander's learned skills for this owner."""
+        skills = self._fetch_rows("commander_skills", {"owner_id": owner_id})
+        return [s for s in skills if s.get("active", True)]
+
+    def _build_skills_context(self, skills: list[dict[str, Any]]) -> str:
+        """Formats learned skills into context for the AI prompt."""
+        if not skills:
+            return ""
+        lines = ["Learned skills and preferences:"]
+        for s in skills[:15]:  # Cap at 15 to manage token budget
+            name = s.get("skill_name", "")
+            desc = s.get("description", "")
+            skill_type = s.get("skill_type", "preference")
+            lines.append(f"- [{skill_type}] {name}: {desc}")
+        return "\n".join(lines)
+
     async def gather_full_context(self, owner_id: str) -> dict[str, Any]:
         """Collects command context in parallel using asyncio.gather."""
 
@@ -409,13 +426,21 @@ class CommanderBrain:
             f"{str(row.get('role') or 'owner')}: {str(row.get('message') or '')}" for row in history_excerpt
         )
 
+        # Load and inject learned skills
+        learned_skills = self._load_learned_skills(owner_id)
+        skills_context = self._build_skills_context(learned_skills)
+
         system_prompt = (
             f"You are {commander_name}, the personal AI chief of staff for {owner_name}.\n"
             "You have real-time access to: leads pipeline, calendar, pending approvals, AI costs,"
             " platform health, and Orion paper trading results.\n"
             "Respond as their trusted chief of staff. Be direct. Lead with the answer."
-            " Tell them what you are doing about it. Use 'I'. Maximum 3 paragraphs unless asked for detail."
+            " Tell them what you are doing about it. Use 'I'. Maximum 3 paragraphs unless asked for detail.\n"
+            "You can learn and remember things the owner teaches you. If they say 'remember' or 'learn' something,"
+            " acknowledge it and confirm you will apply it going forward.\n"
         )
+        if skills_context:
+            system_prompt += f"\n{skills_context}\n"
 
         user_prompt = (
             f"Current context:\n{context_summary}\n\n"
@@ -424,13 +449,20 @@ class CommanderBrain:
             "Also include a compact action list that says which agents I activated and why."
         )
 
+        # Use Haiku for routine chat (25x cheaper), Sonnet only for complex analysis
+        intent = self._infer_intent(owner_message)
+        needs_deep = intent.get("needs_decision", False) or len(owner_message) > 300
+        default_model = "claude-sonnet-4-6" if needs_deep else "claude-haiku-4-5-20251001"
+        model = str(profile.get("brain_model") or default_model)
+        budget = 10 if needs_deep else 4
+
         try:
             ai = ask_claude(
                 system=system_prompt,
                 prompt=user_prompt,
-                model=str(profile.get("brain_model") or "claude-sonnet-4-6"),
+                model=model,
                 max_tokens=450,
-                max_budget_cents=10,
+                max_budget_cents=budget,
                 agent_id=None,
                 is_critical=True,
             )

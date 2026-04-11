@@ -22,6 +22,8 @@ commander_brain = CommanderBrain()
 _MEMORY_CHAT_SESSIONS: dict[str, list[dict[str, Any]]] = {}
 _MEMORY_CONFIG: dict[str, dict[str, Any]] = {}
 _MEMORY_MOBILE_PREFS: dict[str, dict[str, Any]] = {}
+_MEMORY_SKILLS_STORE: dict[str, list[dict[str, Any]]] = {}
+_MEMORY_FEEDBACK: dict[str, list[dict[str, Any]]] = {}
 _CHAT_SESSIONS_DB_AVAILABLE: bool = True
 
 
@@ -333,6 +335,154 @@ def process_owner_email_command(from_email: str, message_body: str) -> dict[str,
 
     owner_id = str(owner.get("id") or "")
     return _process_owner_mobile_message(owner_id=owner_id, message_body=message_body)
+
+
+class SkillLearnPayload(BaseModel):
+    """Payload for teaching Commander a new skill or preference."""
+
+    owner_id: str = Field(min_length=2)
+    skill_name: str = Field(min_length=2)
+    skill_type: str = Field(default="preference")  # preference, workflow, integration, knowledge
+    description: str = Field(min_length=2)
+    trigger_phrases: list[str] = Field(default_factory=list)
+    action_template: str = Field(default="")
+
+
+class FeedbackPayload(BaseModel):
+    """Payload for Commander self-improvement feedback."""
+
+    owner_id: str = Field(min_length=2)
+    message_id: str = Field(default="")
+    rating: int = Field(ge=1, le=5)
+    feedback: str = Field(default="")
+
+
+# ─── History & Skills Endpoints ──────────────────────────────────────────────
+
+
+@router.get("/history/{owner_id}")
+def commander_history(owner_id: str, limit: int = 30) -> dict[str, Any]:
+    """Returns persisted conversation history for frontend hydration."""
+    history = _load_conversation_history(owner_id, limit=min(limit, 50))
+    return {
+        "owner_id": owner_id,
+        "history": history,
+        "count": len(history),
+    }
+
+
+@router.post("/skills/learn")
+def commander_learn_skill(payload: SkillLearnPayload) -> dict[str, Any]:
+    """Teaches Commander a new skill or preference that persists across sessions."""
+    db = _db()
+    now_iso = datetime.now(timezone.utc).isoformat()
+    skill_data = {
+        "owner_id": payload.owner_id,
+        "skill_name": payload.skill_name,
+        "skill_type": payload.skill_type,
+        "description": payload.description,
+        "trigger_phrases": payload.trigger_phrases,
+        "action_template": payload.action_template,
+        "learned_at": now_iso,
+        "usage_count": 0,
+        "active": True,
+    }
+
+    if db:
+        try:
+            db.insert_one("commander_skills", skill_data)
+        except DatabaseConnectionError:
+            pass
+
+    # Also store in memory for immediate use
+    _MEMORY_SKILLS = _MEMORY_SKILLS_STORE.setdefault(payload.owner_id, [])
+    _MEMORY_SKILLS.append(skill_data)
+
+    return {"status": "learned", "skill": skill_data}
+
+
+@router.get("/skills/{owner_id}")
+def commander_skills_list(owner_id: str) -> dict[str, Any]:
+    """Lists all skills Commander has learned for this owner."""
+    db = _db()
+    skills: list[dict[str, Any]] = []
+
+    if db:
+        try:
+            skills = db.fetch_all("commander_skills", {"owner_id": owner_id})
+        except DatabaseConnectionError:
+            pass
+
+    if not skills:
+        skills = _MEMORY_SKILLS_STORE.get(owner_id, [])
+
+    return {"owner_id": owner_id, "skills": skills, "count": len(skills)}
+
+
+@router.post("/feedback")
+def commander_feedback(payload: FeedbackPayload) -> dict[str, Any]:
+    """Records feedback on Commander responses for self-improvement."""
+    db = _db()
+    now_iso = datetime.now(timezone.utc).isoformat()
+    feedback_data = {
+        "owner_id": payload.owner_id,
+        "message_id": payload.message_id,
+        "rating": payload.rating,
+        "feedback": payload.feedback,
+        "created_at": now_iso,
+    }
+
+    if db:
+        try:
+            db.insert_one("commander_feedback", feedback_data)
+        except DatabaseConnectionError:
+            pass
+
+    _MEMORY_FEEDBACK.setdefault(payload.owner_id, []).append(feedback_data)
+
+    return {"status": "recorded", "feedback": feedback_data}
+
+
+@router.get("/profile/{owner_id}")
+def commander_profile(owner_id: str) -> dict[str, Any]:
+    """Returns Commander's full profile: config + skills count + feedback stats."""
+    db = _db()
+    config: dict[str, Any] = {}
+    skills_count = 0
+    avg_rating = 0.0
+
+    if db:
+        try:
+            configs = db.fetch_all("commander_config", {"owner_id": owner_id})
+            if configs:
+                config = configs[0]
+        except DatabaseConnectionError:
+            pass
+        try:
+            skills = db.fetch_all("commander_skills", {"owner_id": owner_id})
+            skills_count = len(skills)
+        except DatabaseConnectionError:
+            pass
+        try:
+            feedbacks = db.fetch_all("commander_feedback", {"owner_id": owner_id})
+            if feedbacks:
+                ratings = [int(f.get("rating") or 0) for f in feedbacks]
+                avg_rating = round(sum(ratings) / len(ratings), 1) if ratings else 0.0
+        except DatabaseConnectionError:
+            pass
+
+    if not config:
+        config = _MEMORY_CONFIG.get(owner_id, {})
+    if not skills_count:
+        skills_count = len(_MEMORY_SKILLS_STORE.get(owner_id, []))
+
+    return {
+        "owner_id": owner_id,
+        "config": config,
+        "skills_count": skills_count,
+        "avg_rating": avg_rating,
+        "self_improvement_active": True,
+    }
 
 
 @router.post("/message")

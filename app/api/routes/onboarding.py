@@ -29,16 +29,26 @@ router = APIRouter(prefix="/onboarding", tags=["onboarding"])
 logger = logging.getLogger("orb.api.onboarding")
 
 
-def _make_jwt(owner_id: str, email: str) -> str:
+def _make_jwt(owner_id: str, email: str, role: str = "standard_user") -> str:
     """Issue a signed JWT for the given owner."""
     settings = get_settings()
     payload = {
         "sub": owner_id,
         "email": email,
+        "role": role,
         "iat": datetime.now(timezone.utc),
         "exp": datetime.now(timezone.utc) + timedelta(days=30),
     }
     return jwt.encode(payload, settings.jwt_secret_key, algorithm="HS256")
+
+
+def _resolve_role(email: str) -> str:
+    """Determines the role for an email. master_owner gets unlimited access."""
+    settings = get_settings()
+    master_email = (settings.my_email or "").strip().lower()
+    if master_email and email.strip().lower() == master_email:
+        return "master_owner"
+    return "standard_user"
 
 _SESSIONS: dict[str, dict[str, Any]] = {}
 
@@ -393,40 +403,48 @@ def onboarding_login(payload: LoginPayload) -> dict[str, Any]:
 
     db = _db()
     if not db:
-        raise HTTPException(status_code=503, detail="Database unavailable. Please try again shortly.")
+        raise HTTPException(status_code=503, detail="Database unavailable. Please try again later.")
 
     try:
-        rows = db.fetch_all("owners", {"email": email})
-    except DatabaseConnectionError:
-        raise HTTPException(status_code=503, detail="Database unavailable.")
+        owners = db.fetch_all("owners", {"email": email})
+    except DatabaseConnectionError as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
 
-    if not rows:
+    if not owners:
         record_failed_login(email)
         raise HTTPException(status_code=401, detail="Invalid email or password.")
 
-    owner = rows[0]
-    stored_hash = owner.get("password_hash") or ""
-
-    if not stored_hash:
-        # Owner registered before password support — allow login, prompt to set password
-        raise HTTPException(
-            status_code=401,
-            detail="Account requires password reset. Please re-register or contact support.",
-        )
-
-    if not verify_password(payload.password, stored_hash):
+    owner = owners[0]
+    stored_hash = str(owner.get("password_hash") or "")
+    if not stored_hash or not verify_password(payload.password, stored_hash):
         record_failed_login(email)
         raise HTTPException(status_code=401, detail="Invalid email or password.")
 
     clear_failed_logins(email)
-    owner_id = str(owner["id"])
-    token = _make_jwt(owner_id, email)
+
+    owner_id = str(owner.get("id") or "")
+    role = _resolve_role(email)
+
+    # Auto-mark master_owner in DB for billing bypass
+    if role == "master_owner":
+        try:
+            db.update_many("owners", {"id": owner_id}, {
+                "role": "master_owner",
+                "billing_exempt": True,
+                "plan": "full_team",
+                "subscription_status": "active",
+            })
+        except DatabaseConnectionError:
+            pass
+
+    token = _make_jwt(owner_id, email, role=role)
+    owner_name = str(owner.get("name") or owner.get("full_name") or "")
 
     return {
         "token": token,
         "owner_id": owner_id,
         "email": email,
-        "name": owner.get("full_name") or owner.get("name") or "",
-        "plan": owner.get("plan") or "starter",
-        "message": "Login successful.",
+        "name": owner_name,
+        "plan": "full_team" if role == "master_owner" else str(owner.get("plan") or "starter"),
+        "role": role,
     }
