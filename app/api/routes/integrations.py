@@ -486,6 +486,90 @@ def health_check(request: Request) -> dict[str, Any]:
     return summary.model_dump()
 
 
+@router.get("/env-status")
+def integration_env_status() -> dict[str, Any]:
+    """Returns which integrations have env vars configured (no auth required).
+
+    This powers the admin connections page — shows which services have
+    API keys set in Railway Variables, regardless of DB state.
+    """
+    from config.settings import get_settings
+    settings = get_settings()
+
+    services = {
+        "anthropic": {
+            "name": "Claude (Anthropic)",
+            "configured": settings.is_configured("anthropic_api_key"),
+            "category": "AI Provider",
+            "env_vars": ["ANTHROPIC_API_KEY"],
+            "docs": "https://console.anthropic.com",
+        },
+        "groq": {
+            "name": "Groq (Llama)",
+            "configured": settings.is_configured("groq_api_key"),
+            "category": "AI Provider",
+            "env_vars": ["GROQ_API_KEY"],
+            "docs": "https://console.groq.com",
+        },
+        "google_ai": {
+            "name": "Google Gemini",
+            "configured": settings.is_configured("google_ai_api_key"),
+            "category": "AI Provider",
+            "env_vars": ["GOOGLE_AI_API_KEY"],
+            "docs": "https://aistudio.google.com/apikey",
+        },
+        "openai": {
+            "name": "OpenAI GPT",
+            "configured": settings.is_configured("openai_api_key"),
+            "category": "AI Provider",
+            "env_vars": ["OPENAI_API_KEY"],
+            "docs": "https://platform.openai.com/api-keys",
+        },
+        "twilio": {
+            "name": "Twilio",
+            "configured": settings.is_configured("twilio_account_sid"),
+            "category": "Communications",
+            "env_vars": ["TWILIO_ACCOUNT_SID", "TWILIO_AUTH_TOKEN", "TWILIO_FROM_NUMBER"],
+            "docs": "https://console.twilio.com",
+        },
+        "resend": {
+            "name": "Resend",
+            "configured": settings.is_configured("resend_api_key"),
+            "category": "Communications",
+            "env_vars": ["RESEND_API_KEY"],
+            "docs": "https://resend.com/api-keys",
+        },
+        "stripe": {
+            "name": "Stripe",
+            "configured": settings.is_configured("stripe_secret_key"),
+            "category": "Payments",
+            "env_vars": ["STRIPE_SECRET_KEY", "STRIPE_WEBHOOK_SECRET"],
+            "docs": "https://dashboard.stripe.com/apikeys",
+        },
+        "google_oauth": {
+            "name": "Google OAuth",
+            "configured": settings.is_configured("google_client_id"),
+            "category": "Authentication",
+            "env_vars": ["GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET"],
+            "docs": "https://console.cloud.google.com",
+        },
+        "bland_ai": {
+            "name": "Bland AI",
+            "configured": settings.is_configured("bland_ai_api_key"),
+            "category": "Communications",
+            "env_vars": ["BLAND_AI_API_KEY"],
+            "docs": "https://app.bland.ai",
+        },
+    }
+
+    configured_count = sum(1 for s in services.values() if s["configured"])
+    return {
+        "services": services,
+        "configured_count": configured_count,
+        "total_count": len(services),
+    }
+
+
 # ---------------------------------------------------------------------------
 # Provider-specific test helpers
 # ---------------------------------------------------------------------------

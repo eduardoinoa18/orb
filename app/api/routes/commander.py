@@ -488,6 +488,10 @@ def commander_profile(owner_id: str) -> dict[str, Any]:
 @router.post("/message")
 def commander_message(payload: CommanderMessagePayload) -> dict[str, Any]:
     """Owner chats with Commander and receives one unified response."""
+
+    # ── Auto-skill detection: if owner says "remember" / "learn" etc ──
+    auto_skill = commander_brain.detect_auto_skill(payload.message, payload.owner_id)
+
     history = _load_conversation_history(payload.owner_id, limit=20)
     context = asyncio.run(commander_brain.gather_full_context(payload.owner_id))
 
@@ -508,11 +512,80 @@ def commander_message(payload: CommanderMessagePayload) -> dict[str, Any]:
         outcome="completed",
     )
 
-    return {
+    result = {
         **response,
         "owner_id": payload.owner_id,
         "history_count": len(history),
         "generated_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+    if auto_skill:
+        result["skill_learned"] = auto_skill.get("skill_name", "")
+        result["auto_learn"] = True
+
+    return result
+
+
+@router.post("/self-improve/{owner_id}")
+def commander_self_improve(owner_id: str) -> dict[str, Any]:
+    """Triggers Commander self-improvement cycle from feedback data.
+
+    Analyzes all collected feedback, identifies behavior patterns,
+    and auto-generates new skills/preferences.
+    """
+    result = commander_brain.self_improve(owner_id)
+    return result
+
+
+@router.get("/ai-providers")
+def commander_ai_providers() -> dict[str, Any]:
+    """Returns which AI providers are available and their status."""
+    from config.settings import get_settings
+    settings = get_settings()
+
+    providers = {
+        "anthropic": {
+            "name": "Claude (Anthropic)",
+            "available": settings.is_configured("anthropic_api_key"),
+            "models": ["claude-haiku-4-5-20251001", "claude-sonnet-4-6", "claude-opus-4-6"],
+            "cost": "paid",
+            "default_for": "Commander brain, complex analysis",
+        },
+        "groq": {
+            "name": "Groq (Llama/Mixtral)",
+            "available": settings.is_configured("groq_api_key"),
+            "models": ["llama-3.3-70b-versatile", "llama-3.1-8b-instant"],
+            "cost": "free",
+            "default_for": "Simple decisions, data extraction, health checks",
+        },
+        "google": {
+            "name": "Gemini (Google)",
+            "available": settings.is_configured("google_ai_api_key"),
+            "models": ["gemini-2.0-flash"],
+            "cost": "free",
+            "default_for": "Content generation, summarization fallback",
+        },
+        "openai": {
+            "name": "GPT (OpenAI)",
+            "available": settings.is_configured("openai_api_key"),
+            "models": ["gpt-4o-mini"],
+            "cost": "paid",
+            "default_for": "Alternative general-purpose AI",
+        },
+    }
+
+    available_count = sum(1 for p in providers.values() if p["available"])
+    free_count = sum(1 for p in providers.values() if p["available"] and p["cost"] == "free")
+
+    return {
+        "providers": providers,
+        "available_count": available_count,
+        "free_providers": free_count,
+        "recommendation": (
+            "Anthropic is your primary provider. Add GROQ_API_KEY (free) for $0 simple tasks."
+            if not providers["groq"]["available"]
+            else "Multi-provider routing active. Groq handles free tasks, Claude handles complex ones."
+        ),
     }
 
 

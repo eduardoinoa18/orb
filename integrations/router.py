@@ -8,11 +8,16 @@ Routing tiers:
   sonnet  — mid-range  (~25 % of calls)
   opus    — highest quality (~5 % of calls)
   groq    — near-free, used when speed > quality
+  gemini  — free Google tier, content fallback
 """
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
+from typing import Any
+
+logger = logging.getLogger("orb.router")
 
 
 # ---------------------------------------------------------------------------
@@ -162,4 +167,75 @@ def route(task_type: str, budget_mode: str = "normal") -> RouteDecision:
         max_tokens=_TOKEN_LIMITS.get(normalised, _DEFAULT_TOKEN_LIMIT),
         task_type=normalised,
         can_cache=True,
+    )
+
+
+def ask_routed(
+    prompt: str,
+    system: str = "You are a helpful assistant.",
+    task_type: str = "short_analysis",
+    max_tokens: int | None = None,
+    budget_mode: str = "normal",
+    agent_id: str | None = None,
+) -> dict[str, Any]:
+    """Route a request to the best available AI provider automatically.
+
+    Tries: Groq (free) → Anthropic → Gemini (free) → fallback error.
+    This is the single function all agents should use for cost-optimized AI calls.
+    """
+    decision = route(task_type, budget_mode=budget_mode)
+    tokens = max_tokens or decision.max_tokens
+
+    # If routed to Groq, try it first
+    if decision.provider == "groq":
+        try:
+            from integrations.groq_client import ask_groq, is_groq_available
+            if is_groq_available():
+                return ask_groq(
+                    prompt=prompt, system=system,
+                    max_tokens=tokens, agent_id=agent_id,
+                )
+        except Exception:
+            logger.warning("Groq unavailable, falling through to Anthropic")
+
+    # Primary: Anthropic
+    try:
+        from integrations.anthropic_client import ask_claude
+        from integrations.anthropic_client import _MODEL_ALIASES
+
+        model_id = _MODEL_ALIASES.get(decision.model_tier, "claude-haiku-4-5-20251001")
+        return ask_claude(
+            prompt=prompt, system=system,
+            model=model_id, max_tokens=tokens,
+            task_type=task_type, agent_id=agent_id,
+        )
+    except Exception as anthropic_err:
+        logger.warning("Anthropic unavailable: %s — trying fallbacks", anthropic_err)
+
+    # Fallback: Gemini (free)
+    try:
+        from integrations.gemini_client import ask_gemini, is_gemini_available
+        if is_gemini_available():
+            return ask_gemini(
+                prompt=prompt, system=system,
+                max_tokens=tokens, agent_id=agent_id,
+            )
+    except Exception:
+        logger.warning("Gemini also unavailable")
+
+    # Fallback: Groq (if not already tried)
+    if decision.provider != "groq":
+        try:
+            from integrations.groq_client import ask_groq, is_groq_available
+            if is_groq_available():
+                return ask_groq(
+                    prompt=prompt, system=system,
+                    max_tokens=tokens, agent_id=agent_id,
+                )
+        except Exception:
+            pass
+
+    raise RuntimeError(
+        "No AI provider available. Set at least one of: "
+        "ANTHROPIC_API_KEY, GROQ_API_KEY, or GOOGLE_AI_API_KEY in Railway Variables."
     )

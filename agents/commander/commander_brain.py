@@ -21,6 +21,7 @@ class CommanderBrain:
 
     def __init__(self) -> None:
         self._db: SupabaseService | None = None
+        self._feedback_cache: dict[str, list[dict[str, Any]]] = {}  # owner_id -> recent feedback
 
     def _get_db(self) -> SupabaseService | None:
         """Returns a shared Supabase helper when available."""
@@ -104,6 +105,169 @@ class CommanderBrain:
             skill_type = s.get("skill_type", "preference")
             lines.append(f"- [{skill_type}] {name}: {desc}")
         return "\n".join(lines)
+
+    # ── Self-Improvement Engine ───────────────────────────────────────────────
+
+    def _load_recent_feedback(self, owner_id: str) -> list[dict[str, Any]]:
+        """Loads recent feedback for behavior adaptation."""
+        if owner_id in self._feedback_cache:
+            return self._feedback_cache[owner_id]
+        feedback = self._fetch_rows("commander_feedback", {"owner_id": owner_id})
+        self._feedback_cache[owner_id] = feedback[-30:]
+        return self._feedback_cache[owner_id]
+
+    def _build_feedback_context(self, feedback: list[dict[str, Any]]) -> str:
+        """Summarizes feedback into a prompt context block."""
+        if not feedback:
+            return ""
+        good = [f for f in feedback if int(f.get("rating", 0)) >= 4]
+        bad = [f for f in feedback if int(f.get("rating", 0)) <= 2]
+        avg = sum(int(f.get("rating", 3)) for f in feedback) / len(feedback)
+        lines = [f"Feedback summary ({len(feedback)} ratings, avg {avg:.1f}/5):"]
+        if bad:
+            lines.append(f"- Owner was unhappy {len(bad)} times. Avoid: long responses, vague answers.")
+        if good:
+            lines.append(f"- Owner liked {len(good)} responses. Keep: direct answers, clear actions.")
+        for f in bad[-3:]:
+            note = f.get("feedback", "")
+            if note:
+                lines.append(f"  → Negative note: '{note}'")
+        return "\n".join(lines)
+
+    def detect_auto_skill(self, owner_message: str, owner_id: str) -> dict[str, Any] | None:
+        """Detects if the owner is teaching Commander something.
+
+        Returns a skill dict if detected, None otherwise.
+        Triggers on: 'remember', 'learn', 'from now on', 'always', 'never',
+        'my preference is', 'I like when you', 'I prefer'.
+        """
+        msg = owner_message.lower().strip()
+        triggers = (
+            "remember", "learn this", "from now on", "always do",
+            "never do", "my preference", "i like when you", "i prefer",
+            "keep in mind", "take note", "make sure you always",
+        )
+        if not any(t in msg for t in triggers):
+            return None
+
+        # Extract the skill content — everything after the trigger word
+        skill_description = owner_message.strip()
+        for t in triggers:
+            idx = msg.find(t)
+            if idx >= 0:
+                skill_description = owner_message[idx:].strip()
+                break
+
+        skill_name = skill_description[:60].replace("\n", " ")
+        skill = {
+            "owner_id": owner_id,
+            "skill_name": skill_name,
+            "skill_type": "preference",
+            "description": skill_description,
+            "trigger_phrases": [],
+            "active": True,
+            "learned_at": datetime.now(timezone.utc).isoformat(),
+            "usage_count": 0,
+        }
+
+        # Persist to DB
+        db = self._get_db()
+        if db:
+            try:
+                db.insert_one("commander_skills", skill)
+            except DatabaseConnectionError:
+                pass
+
+        return skill
+
+    def self_improve(self, owner_id: str) -> dict[str, Any]:
+        """Runs a self-improvement cycle based on collected feedback.
+
+        Analyzes feedback patterns, identifies behavior changes,
+        and updates learned skills/preferences accordingly.
+        """
+        feedback = self._load_recent_feedback(owner_id)
+        skills = self._load_learned_skills(owner_id)
+
+        if not feedback:
+            return {
+                "owner_id": owner_id,
+                "status": "no_feedback",
+                "message": "No feedback data yet. Keep chatting and rating responses.",
+                "improvements": [],
+            }
+
+        # Calculate patterns
+        ratings = [int(f.get("rating", 3)) for f in feedback]
+        avg_rating = sum(ratings) / len(ratings) if ratings else 3.0
+        low_ratings = [f for f in feedback if int(f.get("rating", 0)) <= 2]
+        high_ratings = [f for f in feedback if int(f.get("rating", 0)) >= 4]
+
+        improvements: list[str] = []
+
+        # Pattern: too many low ratings → add "be more concise" skill
+        if len(low_ratings) > 3 and avg_rating < 3.5:
+            concise_skill = {
+                "owner_id": owner_id,
+                "skill_name": "Self-learned: Be more concise",
+                "skill_type": "behavior",
+                "description": "Owner feedback shows preference for shorter, more direct responses. Lead with the answer, minimize filler.",
+                "active": True,
+                "learned_at": datetime.now(timezone.utc).isoformat(),
+                "usage_count": 0,
+            }
+            # Check if this skill already exists
+            existing_concise = [s for s in skills if "concise" in s.get("skill_name", "").lower()]
+            if not existing_concise:
+                db = self._get_db()
+                if db:
+                    try:
+                        db.insert_one("commander_skills", concise_skill)
+                        improvements.append("Learned to be more concise based on feedback patterns")
+                    except DatabaseConnectionError:
+                        pass
+
+        # Pattern: mostly positive → note what's working
+        if avg_rating >= 4.0 and len(high_ratings) > 5:
+            improvements.append("Current approach is working well — maintaining direct, action-oriented style")
+
+        # Extract negative feedback themes
+        negative_notes = [f.get("feedback", "") for f in low_ratings if f.get("feedback")]
+        if negative_notes:
+            for note in negative_notes[-3:]:
+                note_lower = note.lower()
+                if "slow" in note_lower or "long" in note_lower:
+                    improvements.append("Reducing response length based on feedback")
+                if "wrong" in note_lower or "incorrect" in note_lower:
+                    improvements.append("Increasing context verification before responding")
+
+        # Log the self-improvement event
+        db = self._get_db()
+        if db:
+            try:
+                from app.database.activity_log import log_activity
+                log_activity(
+                    agent_id=None,
+                    action_type="commander_self_improvement",
+                    description=f"Self-improvement: {len(improvements)} changes from {len(feedback)} feedback entries (avg {avg_rating:.1f})",
+                    outcome="success",
+                    cost_cents=0,
+                )
+            except Exception:
+                pass
+
+        # Clear feedback cache so next cycle gets fresh data
+        self._feedback_cache.pop(owner_id, None)
+
+        return {
+            "owner_id": owner_id,
+            "status": "improved",
+            "feedback_analyzed": len(feedback),
+            "avg_rating": round(avg_rating, 1),
+            "skills_count": len(skills),
+            "improvements": improvements,
+            "message": f"Analyzed {len(feedback)} feedback entries. Made {len(improvements)} improvement(s).",
+        }
 
     async def gather_full_context(self, owner_id: str) -> dict[str, Any]:
         """Collects command context in parallel using asyncio.gather."""
@@ -430,6 +594,10 @@ class CommanderBrain:
         learned_skills = self._load_learned_skills(owner_id)
         skills_context = self._build_skills_context(learned_skills)
 
+        # Load feedback for behavior adaptation
+        recent_feedback = self._load_recent_feedback(owner_id)
+        feedback_context = self._build_feedback_context(recent_feedback)
+
         system_prompt = (
             f"You are {commander_name}, the personal AI chief of staff for {owner_name}.\n"
             "You have real-time access to: leads pipeline, calendar, pending approvals, AI costs,"
@@ -438,9 +606,12 @@ class CommanderBrain:
             " Tell them what you are doing about it. Use 'I'. Maximum 3 paragraphs unless asked for detail.\n"
             "You can learn and remember things the owner teaches you. If they say 'remember' or 'learn' something,"
             " acknowledge it and confirm you will apply it going forward.\n"
+            "You continuously self-improve based on feedback. Apply the lessons below.\n"
         )
         if skills_context:
             system_prompt += f"\n{skills_context}\n"
+        if feedback_context:
+            system_prompt += f"\n{feedback_context}\n"
 
         user_prompt = (
             f"Current context:\n{context_summary}\n\n"
