@@ -20,6 +20,29 @@ logger = logging.getLogger("orb.commander_settings")
 router = APIRouter(prefix="/commander", tags=["Commander"])
 
 
+def _default_commander_config(owner_id: str) -> CommanderConfig:
+    """Safe fallback config when persistence is unavailable."""
+    return CommanderConfig(
+        id="",
+        owner_id=owner_id,
+        commander_name="Max",
+        personality_style="professional",
+        communication_style="concise",
+        proactivity_level=7,
+        morning_briefing_enabled=True,
+        briefing_time="07:00",
+        weekly_review_enabled=True,
+        review_day="sunday",
+        language="en",
+        safe_mode=False,
+        autonomy_level=5,
+        channel_preferences={},
+        approval_rules={},
+        created_at="",
+        updated_at="",
+    )
+
+
 # ---------------------------------------------------------------------------
 # Pydantic Models
 # ---------------------------------------------------------------------------
@@ -182,28 +205,54 @@ def get_commander_settings(request: Request) -> CommanderConfig:
     try:
         db = _get_db()
         row = _ensure_commander_config_row(owner_id, db)
+        if not isinstance(row, dict):
+            logger.warning("Commander config row had unexpected type: %s", type(row))
+            return _default_commander_config(owner_id)
     except DatabaseConnectionError as error:
-        logger.error("Failed to fetch Commander settings: %s", error)
-        raise HTTPException(status_code=503, detail="Database unavailable") from error
+        logger.warning("Failed to fetch Commander settings, returning defaults: %s", error)
+        return _default_commander_config(owner_id)
+
+    channel_preferences = row.get("channel_preferences")
+    approval_rules = row.get("approval_rules")
+
+    proactivity_level = row.get("proactivity_level")
+    if not isinstance(proactivity_level, int):
+        proactivity_level = 7
+
+    autonomy_level = row.get("autonomy_level")
+    if not isinstance(autonomy_level, int):
+        autonomy_level = 5
+
+    morning_briefing_enabled = row.get("morning_briefing_enabled")
+    if not isinstance(morning_briefing_enabled, bool):
+        morning_briefing_enabled = True
+
+    weekly_review_enabled = row.get("weekly_review_enabled")
+    if not isinstance(weekly_review_enabled, bool):
+        weekly_review_enabled = True
+
+    safe_mode = row.get("safe_mode")
+    if not isinstance(safe_mode, bool):
+        safe_mode = False
 
     return CommanderConfig(
         id=row.get("id", ""),
-        owner_id=row.get("owner_id", ""),
-        commander_name=row.get("commander_name", "Max"),
-        personality_style=row.get("personality_style", "professional"),
-        communication_style=row.get("communication_style", "concise"),
-        proactivity_level=row.get("proactivity_level", 7),
-        morning_briefing_enabled=row.get("morning_briefing_enabled", True),
-        briefing_time=row.get("briefing_time", "07:00"),
-        weekly_review_enabled=row.get("weekly_review_enabled", True),
-        review_day=row.get("review_day", "sunday"),
-        language=row.get("language", "en"),
-        safe_mode=row.get("safe_mode", False),
-        autonomy_level=row.get("autonomy_level", 5),
-        channel_preferences=row.get("channel_preferences") or {},
-        approval_rules=row.get("approval_rules") or {},
-        created_at=str(row.get("created_at", "")),
-        updated_at=str(row.get("updated_at", "")),
+        owner_id=row.get("owner_id") or owner_id,
+        commander_name=row.get("commander_name") or "Max",
+        personality_style=row.get("personality_style") or "professional",
+        communication_style=row.get("communication_style") or "concise",
+        proactivity_level=proactivity_level,
+        morning_briefing_enabled=morning_briefing_enabled,
+        briefing_time=row.get("briefing_time") or "07:00",
+        weekly_review_enabled=weekly_review_enabled,
+        review_day=row.get("review_day") or "sunday",
+        language=row.get("language") or "en",
+        safe_mode=safe_mode,
+        autonomy_level=autonomy_level,
+        channel_preferences=channel_preferences if isinstance(channel_preferences, dict) else {},
+        approval_rules=approval_rules if isinstance(approval_rules, dict) else {},
+        created_at=str(row.get("created_at") or ""),
+        updated_at=str(row.get("updated_at") or ""),
     )
 
 

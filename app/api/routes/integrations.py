@@ -159,7 +159,7 @@ def list_providers() -> ProvidersResponse:
 
 
 @router.get("/status")
-def get_integration_status(request: Request) -> dict[str, Any]:
+def get_integration_status(request: Request) -> list[dict[str, Any]]:
     """Get integration statuses for the current owner across all providers."""
     owner_id = _get_owner_id(request)
     try:
