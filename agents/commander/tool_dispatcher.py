@@ -25,6 +25,9 @@ Supported tool actions:
 - hubspot_contact   → Create/find a HubSpot contact
 - hubspot_deal      → Create a HubSpot deal
 - hubspot_note      → Log a note on a contact
+- fub_contact       → Create a Follow Up Boss contact
+- fub_note          → Add a Follow Up Boss note
+- fub_search        → Search Follow Up Boss contacts
 - github_issue      → Create a GitHub issue
 - github_comment    → Comment on an issue
 - github_commits    → Get recent commits
@@ -156,6 +159,10 @@ class ToolDispatcher:
             "hubspot_deal": self._hubspot_deal,
             "hubspot_note": self._hubspot_note,
             "hubspot_search": self._hubspot_search,
+            # Follow Up Boss
+            "fub_contact": self._fub_contact,
+            "fub_note": self._fub_note,
+            "fub_search": self._fub_search,
             # GitHub
             "github_issue": self._github_issue,
             "github_comment": self._github_comment,
@@ -428,6 +435,46 @@ class ToolDispatcher:
         contacts = search_contacts(query=p["query"])
         return ToolResult("hubspot_search", True,
                           data=[f"{c['firstname']} {c['lastname']} <{c['email']}>" for c in contacts])
+
+    # ---------------------------------------------------------------------------
+    # Follow Up Boss handlers
+    # ---------------------------------------------------------------------------
+
+    def _fub_contact(self, p: dict) -> ToolResult:
+        self._guard.require(Permission.CREATE_CONTACT, "fub_contact")
+        from integrations.followupboss_client import create_person, is_followupboss_available
+        if not is_followupboss_available():
+            return ToolResult("fub_contact", False, error="Follow Up Boss not configured. Add FOLLOWUPBOSS_API_KEY.")
+
+        person = create_person(
+            first_name=p["first_name"],
+            last_name=p.get("last_name", ""),
+            email=p["email"],
+            phone=p.get("phone"),
+        )
+        return ToolResult("fub_contact", True, data=f"FUB contact created: {person['name']} ({person['email']})")
+
+    def _fub_note(self, p: dict) -> ToolResult:
+        self._guard.require(Permission.UPDATE_CONTACT, "fub_note")
+        from integrations.followupboss_client import add_note, is_followupboss_available
+        if not is_followupboss_available():
+            return ToolResult("fub_note", False, error="Follow Up Boss not configured.")
+
+        note = add_note(person_id=p["person_id"], body=p["note"])
+        return ToolResult("fub_note", True, data=f"FUB note added (id: {note.get('id')})")
+
+    def _fub_search(self, p: dict) -> ToolResult:
+        self._guard.require(Permission.READ_CONTACTS, "fub_search")
+        from integrations.followupboss_client import search_people, is_followupboss_available
+        if not is_followupboss_available():
+            return ToolResult("fub_search", False, error="Follow Up Boss not configured.")
+
+        people = search_people(query=p["query"], limit=p.get("limit", 10))
+        return ToolResult(
+            "fub_search",
+            True,
+            data=[f"{x['name']} <{x['email']}>" for x in people],
+        )
 
     # ---------------------------------------------------------------------------
     # GitHub handlers

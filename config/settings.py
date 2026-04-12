@@ -116,6 +116,7 @@ class Settings(BaseSettings):
     notion_database_id: str = ""
     github_token: str = ""
     hubspot_api_key: str = ""
+    followupboss_api_key: str = ""
     elevenlabs_api_key: str = ""
 
     # ── Payments (optional) ───────────────────────────────────────────────────
@@ -306,6 +307,7 @@ class Settings(BaseSettings):
             "notion": self.is_configured("notion_api_key"),
             "github": self.is_configured("github_token"),
             "hubspot": self.is_configured("hubspot_api_key"),
+            "followupboss": self.is_configured("followupboss_api_key"),
             "elevenlabs": self.is_configured("elevenlabs_api_key"),
             "stripe": self.is_configured("stripe_secret_key"),
             "resend": self.is_configured("resend_api_key"),

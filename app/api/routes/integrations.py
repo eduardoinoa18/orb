@@ -372,6 +372,8 @@ def test_integration(provider_slug: str, request: Request) -> TestResult:
             success, message = _test_openai(credentials.get("api_key", ""))
         elif provider_slug == "stripe":
             success, message = _test_stripe(credentials.get("secret_key", ""))
+        elif provider_slug in {"followupboss", "follow-up-boss", "follow_up_boss"}:
+            success, message = _test_followupboss(credentials.get("api_key", ""))
         else:
             # Generic test: just check that required fields exist
             provider_info = db.fetch_all("integration_providers", {"slug": provider_slug})
@@ -604,6 +606,14 @@ def integration_env_status() -> dict[str, Any]:
             "docs": "https://app.hubspot.com/private-apps",
             "free": True,
         },
+        "followupboss": {
+            "name": "Follow Up Boss",
+            "configured": settings.is_configured("followupboss_api_key"),
+            "category": "CRM",
+            "env_vars": ["FOLLOWUPBOSS_API_KEY"],
+            "docs": "https://developer.followupboss.com/",
+            "free": False,
+        },
         "elevenlabs": {
             "name": "ElevenLabs (Voice)",
             "configured": settings.is_configured("elevenlabs_api_key"),
@@ -655,6 +665,9 @@ def execute_tool(payload: ToolExecuteRequest, request: Request) -> dict[str, Any
       hubspot_deal:     {name, amount?, stage?, contact_ids?}
       hubspot_note:     {contact_id, note}
       hubspot_search:   {query}
+    fub_contact:      {first_name, last_name, email, phone?}
+    fub_note:         {person_id, note}
+    fub_search:       {query, limit?}
       github_issue:     {repo (owner/repo), title, body?, labels?}
       github_comment:   {repo, issue_number, comment}
       github_commits:   {repo, limit?}
@@ -722,6 +735,13 @@ def list_available_tools() -> dict[str, Any]:
          "available": s.is_configured("hubspot_api_key"), "requires": "HUBSPOT_API_KEY"},
         {"tool": "hubspot_search", "name": "Search Contacts", "category": "CRM",
          "available": s.is_configured("hubspot_api_key"), "requires": "HUBSPOT_API_KEY"},
+        # Follow Up Boss
+        {"tool": "fub_contact", "name": "Create FUB Contact", "category": "CRM",
+         "available": s.is_configured("followupboss_api_key"), "requires": "FOLLOWUPBOSS_API_KEY"},
+        {"tool": "fub_note", "name": "Add FUB Note", "category": "CRM",
+         "available": s.is_configured("followupboss_api_key"), "requires": "FOLLOWUPBOSS_API_KEY"},
+        {"tool": "fub_search", "name": "Search FUB Contacts", "category": "CRM",
+         "available": s.is_configured("followupboss_api_key"), "requires": "FOLLOWUPBOSS_API_KEY"},
         # GitHub
         {"tool": "github_issue", "name": "Create GitHub Issue", "category": "Dev",
          "available": s.is_configured("github_token"), "requires": "GITHUB_TOKEN"},
@@ -817,3 +837,15 @@ def _test_stripe(secret_key: str) -> tuple[bool, str]:
         return True, "Connected to Stripe API"
     except Exception as error:
         return False, f"Stripe error: {str(error)[:100]}"
+
+
+def _test_followupboss(api_key: str) -> tuple[bool, str]:
+    """Test Follow Up Boss API connectivity."""
+    if not api_key:
+        return False, "Missing Follow Up Boss API key"
+
+    try:
+        from integrations.followupboss_client import test_connection
+        return test_connection(api_key)
+    except Exception as error:
+        return False, f"Follow Up Boss error: {str(error)[:100]}"
