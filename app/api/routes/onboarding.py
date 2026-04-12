@@ -217,14 +217,31 @@ def onboarding_register(payload: RegisterPayload) -> dict[str, Any]:
         # Keep registration available even if outbound email provider fails.
         logger.exception("Welcome email failed for onboarding registration", extra={"email": str(payload.email)})
 
-    token = _make_jwt(owner_id, email)
+    role = _resolve_role(email)
+
+    # If this is the master owner registering, upgrade their account immediately
+    if role == "master_owner":
+        try:
+            db_conn = _db()
+            if db_conn:
+                db_conn.update_many("owners", {"id": owner_id}, {
+                    "role": "master_owner",
+                    "billing_exempt": True,
+                    "plan": "full_team",
+                    "subscription_status": "active",
+                })
+        except DatabaseConnectionError:
+            pass
+
+    token = _make_jwt(owner_id, email, role=role)
 
     return {
         "token": token,
         "owner_id": owner_id,
         "email": email,
+        "role": role,
         "name": owner.get("full_name") or owner.get("name") or owner_name,
-        "plan": owner.get("plan") or "starter",
+        "plan": "full_team" if role == "master_owner" else (owner.get("plan") or "starter"),
         "owner": owner,
         "next_step": "about_you",
         "message": "Account created. Verification step is stubbed for local mode.",
@@ -447,4 +464,72 @@ def onboarding_login(payload: LoginPayload) -> dict[str, Any]:
         "name": owner_name,
         "plan": "full_team" if role == "master_owner" else str(owner.get("plan") or "starter"),
         "role": role,
+    }
+
+class AdminBootstrapPayload(BaseModel):
+    email: EmailStr
+    password: str = Field(min_length=8)
+
+
+@router.post("/admin-bootstrap")
+def admin_bootstrap(payload: AdminBootstrapPayload) -> dict[str, Any]:
+    """Create or reset the master owner account.
+    
+    Only works when the submitted email matches MY_EMAIL env var.
+    No secret required because the email itself is the gate.
+    Use this once to create your admin account in production.
+    """
+    settings = get_settings()
+    master_email = (settings.my_email or "").strip().lower()
+    email = str(payload.email).strip().lower()
+
+    if not master_email or email != master_email:
+        raise HTTPException(status_code=403, detail="Email does not match the configured master owner.")
+
+    db = _db()
+    if not db:
+        raise HTTPException(status_code=503, detail="Database unavailable.")
+
+    try:
+        password_hash = hash_password(payload.password)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail="Failed to hash password.") from exc
+
+    owner_id = None
+    try:
+        existing = db.fetch_all("owners", {"email": email})
+        if existing:
+            owner_id = str(existing[0].get("id") or "")
+            db.update_many("owners", {"id": owner_id}, {
+                "password_hash": password_hash,
+                "role": "master_owner",
+                "billing_exempt": True,
+                "plan": "full_team",
+                "subscription_status": "active",
+            })
+        else:
+            from uuid import uuid4 as _uuid4
+            owner_id = str(_uuid4())
+            db.insert_one("owners", {
+                "id": owner_id,
+                "email": email,
+                "full_name": "Master Owner",
+                "name": "Master Owner",
+                "password_hash": password_hash,
+                "role": "master_owner",
+                "billing_exempt": True,
+                "plan": "full_team",
+                "subscription_status": "active",
+            })
+    except DatabaseConnectionError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    token = _make_jwt(owner_id, email, role="master_owner")
+    return {
+        "token": token,
+        "owner_id": owner_id,
+        "email": email,
+        "role": "master_owner",
+        "plan": "full_team",
+        "message": "Admin account created/updated. You can now login normally.",
     }
