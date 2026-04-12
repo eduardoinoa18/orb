@@ -106,8 +106,17 @@ class Settings(BaseSettings):
     # ── Google OAuth (optional) ───────────────────────────────────────────────
     google_client_id: str = ""
     google_client_secret: str = ""
+    google_refresh_token: str = ""
     google_redirect_uri: str = ""
     google_workspace_admin_email: str = ""
+
+    # ── Extended Integrations (optional) ─────────────────────────────────────
+    slack_bot_token: str = ""
+    notion_api_key: str = ""
+    notion_database_id: str = ""
+    github_token: str = ""
+    hubspot_api_key: str = ""
+    elevenlabs_api_key: str = ""
 
     # ── Payments (optional) ───────────────────────────────────────────────────
     stripe_secret_key: str = ""
@@ -292,6 +301,12 @@ class Settings(BaseSettings):
             "twilio": self.is_configured("twilio_account_sid"),
             "bland_ai": self.is_configured("bland_ai_api_key"),
             "google_oauth": self.is_configured("google_client_id"),
+            "google_calendar": self.is_configured("google_refresh_token"),
+            "slack": self.is_configured("slack_bot_token"),
+            "notion": self.is_configured("notion_api_key"),
+            "github": self.is_configured("github_token"),
+            "hubspot": self.is_configured("hubspot_api_key"),
+            "elevenlabs": self.is_configured("elevenlabs_api_key"),
             "stripe": self.is_configured("stripe_secret_key"),
             "resend": self.is_configured("resend_api_key"),
             "alpha_vantage": self.is_configured("alpha_vantage_api_key"),

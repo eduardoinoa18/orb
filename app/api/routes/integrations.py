@@ -560,6 +560,58 @@ def integration_env_status() -> dict[str, Any]:
             "env_vars": ["BLAND_AI_API_KEY"],
             "docs": "https://app.bland.ai",
         },
+        # --- New integrations ---
+        "slack": {
+            "name": "Slack",
+            "configured": settings.is_configured("slack_bot_token"),
+            "category": "Team Comms",
+            "env_vars": ["SLACK_BOT_TOKEN"],
+            "docs": "https://api.slack.com/apps",
+            "free": True,
+        },
+        "google_calendar": {
+            "name": "Google Calendar",
+            "configured": (
+                settings.is_configured("google_client_id")
+                and settings.is_configured("google_refresh_token")
+            ),
+            "category": "Productivity",
+            "env_vars": ["GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET", "GOOGLE_REFRESH_TOKEN"],
+            "docs": "https://console.cloud.google.com/apis/library/calendar-json.googleapis.com",
+            "free": True,
+        },
+        "notion": {
+            "name": "Notion",
+            "configured": settings.is_configured("notion_api_key"),
+            "category": "Productivity",
+            "env_vars": ["NOTION_API_KEY", "NOTION_DATABASE_ID"],
+            "docs": "https://www.notion.so/my-integrations",
+            "free": True,
+        },
+        "github": {
+            "name": "GitHub",
+            "configured": settings.is_configured("github_token"),
+            "category": "Development",
+            "env_vars": ["GITHUB_TOKEN"],
+            "docs": "https://github.com/settings/tokens",
+            "free": True,
+        },
+        "hubspot": {
+            "name": "HubSpot CRM",
+            "configured": settings.is_configured("hubspot_api_key"),
+            "category": "CRM",
+            "env_vars": ["HUBSPOT_API_KEY"],
+            "docs": "https://app.hubspot.com/private-apps",
+            "free": True,
+        },
+        "elevenlabs": {
+            "name": "ElevenLabs (Voice)",
+            "configured": settings.is_configured("elevenlabs_api_key"),
+            "category": "AI Provider",
+            "env_vars": ["ELEVENLABS_API_KEY"],
+            "docs": "https://elevenlabs.io/api",
+            "free": True,
+        },
     }
 
     configured_count = sum(1 for s in services.values() if s["configured"])
@@ -568,6 +620,135 @@ def integration_env_status() -> dict[str, Any]:
         "configured_count": configured_count,
         "total_count": len(services),
     }
+
+
+# ---------------------------------------------------------------------------
+# Tool execution endpoint — lets Commander take real actions
+# ---------------------------------------------------------------------------
+
+class ToolExecuteRequest(BaseModel):
+    """Request body for executing a tool action via Commander."""
+    tool: str = Field(..., description="Tool identifier, e.g. 'slack_send', 'calendar_create'")
+    params: dict[str, Any] = Field(default_factory=dict, description="Tool-specific parameters")
+
+
+@router.post("/tools/execute")
+def execute_tool(payload: ToolExecuteRequest, request: Request) -> dict[str, Any]:
+    """Execute a real-world action using one of the connected integrations.
+
+    This endpoint is the bridge between the Commander AI and the physical world.
+    Security is fully enforced: permissions, rate limits, and financial caps all apply.
+
+    Common tools and required params:
+      slack_send:       {channel, text}
+      slack_alert:      {channel, title, body, level}
+      calendar_list:    {days?, limit?}
+      calendar_create:  {title, start (ISO), end (ISO), attendees?, google_meet?}
+      calendar_cancel:  {event_id}
+      calendar_check:   {emails, start (ISO), end (ISO)}
+      email_send:       {to, subject, html}
+      sms_send:         {to, message}
+      notion_create:    {database_id, title, content?}
+      notion_log:       {page_id, event, details?}
+      notion_search:    {query}
+      hubspot_contact:  {email, firstname?, lastname?, company?, phone?, stage?}
+      hubspot_deal:     {name, amount?, stage?, contact_ids?}
+      hubspot_note:     {contact_id, note}
+      hubspot_search:   {query}
+      github_issue:     {repo (owner/repo), title, body?, labels?}
+      github_comment:   {repo, issue_number, comment}
+      github_commits:   {repo, limit?}
+      voice_speak:      {text, output_path?}
+      rate_status:      {}
+    """
+    owner_id = _get_owner_id(request)
+
+    # Get owner plan for rate limiting
+    plan = "starter"
+    try:
+        db = _get_db()
+        owner_rows = db.fetch_all("owners", {"id": owner_id})
+        if owner_rows:
+            plan = owner_rows[0].get("plan", "starter")
+    except Exception:
+        pass
+
+    from agents.commander.tool_dispatcher import ToolDispatcher
+    dispatcher = ToolDispatcher(owner_id=owner_id, plan=plan)
+    result = dispatcher.execute(tool=payload.tool, params=payload.params)
+
+    return result.to_dict()
+
+
+@router.get("/tools/available")
+def list_available_tools() -> dict[str, Any]:
+    """List all tools and which ones are currently available based on env config."""
+    from config.settings import get_settings
+    s = get_settings()
+
+    tools = [
+        # Slack
+        {"tool": "slack_send", "name": "Send Slack Message", "category": "Comms",
+         "available": s.is_configured("slack_bot_token"), "requires": "SLACK_BOT_TOKEN"},
+        {"tool": "slack_alert", "name": "Send Slack Alert", "category": "Comms",
+         "available": s.is_configured("slack_bot_token"), "requires": "SLACK_BOT_TOKEN"},
+        # Calendar
+        {"tool": "calendar_list", "name": "List Calendar Events", "category": "Calendar",
+         "available": s.is_configured("google_refresh_token"), "requires": "GOOGLE_REFRESH_TOKEN"},
+        {"tool": "calendar_create", "name": "Create Calendar Event", "category": "Calendar",
+         "available": s.is_configured("google_refresh_token"), "requires": "GOOGLE_REFRESH_TOKEN"},
+        {"tool": "calendar_cancel", "name": "Cancel Calendar Event", "category": "Calendar",
+         "available": s.is_configured("google_refresh_token"), "requires": "GOOGLE_REFRESH_TOKEN"},
+        {"tool": "calendar_check", "name": "Check Availability", "category": "Calendar",
+         "available": s.is_configured("google_refresh_token"), "requires": "GOOGLE_REFRESH_TOKEN"},
+        # Email / SMS
+        {"tool": "email_send", "name": "Send Email", "category": "Comms",
+         "available": s.is_configured("resend_api_key"), "requires": "RESEND_API_KEY"},
+        {"tool": "sms_send", "name": "Send SMS", "category": "Comms",
+         "available": s.is_configured("twilio_account_sid"), "requires": "TWILIO_ACCOUNT_SID"},
+        # Notion
+        {"tool": "notion_create", "name": "Create Notion Page", "category": "Productivity",
+         "available": s.is_configured("notion_api_key"), "requires": "NOTION_API_KEY"},
+        {"tool": "notion_log", "name": "Log to Notion", "category": "Productivity",
+         "available": s.is_configured("notion_api_key"), "requires": "NOTION_API_KEY"},
+        {"tool": "notion_search", "name": "Search Notion", "category": "Productivity",
+         "available": s.is_configured("notion_api_key"), "requires": "NOTION_API_KEY"},
+        # HubSpot
+        {"tool": "hubspot_contact", "name": "Create/Find Contact", "category": "CRM",
+         "available": s.is_configured("hubspot_api_key"), "requires": "HUBSPOT_API_KEY"},
+        {"tool": "hubspot_deal", "name": "Create Deal", "category": "CRM",
+         "available": s.is_configured("hubspot_api_key"), "requires": "HUBSPOT_API_KEY"},
+        {"tool": "hubspot_note", "name": "Log CRM Note", "category": "CRM",
+         "available": s.is_configured("hubspot_api_key"), "requires": "HUBSPOT_API_KEY"},
+        {"tool": "hubspot_search", "name": "Search Contacts", "category": "CRM",
+         "available": s.is_configured("hubspot_api_key"), "requires": "HUBSPOT_API_KEY"},
+        # GitHub
+        {"tool": "github_issue", "name": "Create GitHub Issue", "category": "Dev",
+         "available": s.is_configured("github_token"), "requires": "GITHUB_TOKEN"},
+        {"tool": "github_comment", "name": "Comment on Issue", "category": "Dev",
+         "available": s.is_configured("github_token"), "requires": "GITHUB_TOKEN"},
+        {"tool": "github_commits", "name": "Get Recent Commits", "category": "Dev",
+         "available": s.is_configured("github_token"), "requires": "GITHUB_TOKEN"},
+        # Voice
+        {"tool": "voice_speak", "name": "Text to Speech", "category": "AI",
+         "available": s.is_configured("elevenlabs_api_key"), "requires": "ELEVENLABS_API_KEY"},
+        # Utility
+        {"tool": "rate_status", "name": "Check Rate Limits", "category": "System",
+         "available": True, "requires": None},
+    ]
+
+    available_count = sum(1 for t in tools if t["available"])
+    return {
+        "tools": tools,
+        "available_count": available_count,
+        "total_count": len(tools),
+    }
+
+
+@router.get("/available-tools")
+def list_available_tools_alias() -> dict[str, Any]:
+    """Alias for frontend clients expecting /integrations/available-tools."""
+    return list_available_tools()
 
 
 # ---------------------------------------------------------------------------
