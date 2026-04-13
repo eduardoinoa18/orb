@@ -642,6 +642,15 @@ def dashboard_approvals() -> dict[str, Any]:
     return {"approvals": approvals, "count": len(approvals)}
 
 
+@router.get("/activity-log")
+def dashboard_activity_log() -> list[dict[str, Any]]:
+    """Returns the recent activity log ordered newest first."""
+    db = SupabaseService()
+    activity = _safe_fetch(db, "activity_log")
+    activity.sort(key=lambda row: str(row.get("created_at") or ""), reverse=True)
+    return activity[:100]
+
+
 @router.post("/approve/{activity_id}")
 def dashboard_approve(activity_id: str) -> dict[str, Any]:
     """Approves a pending activity item."""
