@@ -28,6 +28,12 @@ from integrations.resend_client import send_resend_email
 router = APIRouter(prefix="/onboarding", tags=["onboarding"])
 logger = logging.getLogger("orb.api.onboarding")
 
+ADMIN_BOOTSTRAP_DB_ERROR = (
+    "Database unavailable for admin bootstrap. "
+    "Verify Railway backend variables SUPABASE_URL, SUPABASE_SERVICE_KEY, and SUPABASE_ANON_KEY, "
+    "then redeploy the orb-platform service."
+)
+
 
 def _make_jwt(owner_id: str, email: str, role: str = "standard_user") -> str:
     """Issue a signed JWT for the given owner."""
@@ -486,9 +492,10 @@ def admin_bootstrap(payload: AdminBootstrapPayload) -> dict[str, Any]:
     if not master_email or email != master_email:
         raise HTTPException(status_code=403, detail="Email does not match the configured master owner.")
 
-    db = _db()
-    if not db:
-        raise HTTPException(status_code=503, detail="Database unavailable.")
+    try:
+        db = SupabaseService()
+    except DatabaseConnectionError as exc:
+        raise HTTPException(status_code=503, detail=ADMIN_BOOTSTRAP_DB_ERROR) from exc
 
     try:
         password_hash = hash_password(payload.password)
@@ -522,7 +529,7 @@ def admin_bootstrap(payload: AdminBootstrapPayload) -> dict[str, Any]:
                 "subscription_status": "active",
             })
     except DatabaseConnectionError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
+        raise HTTPException(status_code=503, detail=ADMIN_BOOTSTRAP_DB_ERROR) from exc
 
     token = _make_jwt(owner_id, email, role="master_owner")
     return {
