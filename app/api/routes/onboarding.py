@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 from uuid import uuid4
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, EmailStr, Field
 from jose import jwt
 
@@ -471,6 +471,60 @@ def onboarding_login(payload: LoginPayload) -> dict[str, Any]:
         "plan": "full_team" if role == "master_owner" else str(owner.get("plan") or "starter"),
         "role": role,
     }
+
+class PromotePayload(BaseModel):
+    email: EmailStr
+    role: str = Field(pattern="^(standard_user|admin|master_owner)$", default="admin")
+
+
+@router.post("/promote")
+def promote_user(payload: PromotePayload, request: Request) -> dict[str, Any]:
+    """Promote any existing user to a new role. Caller must be master_owner."""
+    auth = request.headers.get("Authorization", "")
+    if not auth.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Authorization token required.")
+    token_str = auth[7:]
+    settings = get_settings()
+    try:
+        decoded = jwt.decode(token_str, settings.jwt_secret_key, algorithms=["HS256"])
+    except Exception as exc:
+        raise HTTPException(status_code=401, detail="Invalid token.") from exc
+    if decoded.get("role") != "master_owner":
+        raise HTTPException(status_code=403, detail="Only the master owner can promote users.")
+
+    email = str(payload.email).strip().lower()
+    db = _db()
+    if not db:
+        raise HTTPException(status_code=503, detail="Database unavailable.")
+    try:
+        owners = db.fetch_all("owners", {"email": email})
+        if not owners:
+            raise HTTPException(status_code=404, detail=f"No user found with email {email}.")
+        target_id = str(owners[0].get("id") or "")
+        new_role = payload.role
+        is_elevated = new_role in ("admin", "master_owner")
+        update: dict[str, Any] = {"role": new_role}
+        if is_elevated:
+            update["billing_exempt"] = True
+            update["plan"] = "full_team"
+            update["subscription_status"] = "active"
+        try:
+            db.update_many("owners", {"id": target_id}, update)
+        except DatabaseConnectionError:
+            # Schema may not have all columns — fall back to role-only update
+            db.update_many("owners", {"id": target_id}, {"role": new_role})
+    except HTTPException:
+        raise
+    except DatabaseConnectionError as exc:
+        raise HTTPException(status_code=503, detail="Failed to update user role.") from exc
+
+    logger.info("User promoted", extra={"email": email, "role": payload.role})
+    return {
+        "email": email,
+        "new_role": payload.role,
+        "message": f"User {email} promoted to {payload.role}.",
+    }
+
 
 class AdminBootstrapPayload(BaseModel):
     email: EmailStr
