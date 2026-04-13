@@ -30,6 +30,12 @@ class PortalPayload(BaseModel):
     owner_id: str = Field(min_length=2)
 
 
+class PaymentMethodSetupPayload(BaseModel):
+    """Payload for collecting a payment method (card/debit) via Stripe Checkout setup mode."""
+
+    owner_id: str = Field(min_length=2)
+
+
 class AddonCheckoutPayload(BaseModel):
     """Payload for adding an individual agent as a Stripe subscription add-on."""
 
@@ -476,6 +482,47 @@ def create_portal_session(payload: PortalPayload) -> dict[str, Any]:
     )
 
     return {"portal_url": session.get("url"), "customer_id": customer_id}
+
+
+@router.post("/create-payment-method-setup")
+def create_payment_method_setup(payload: PaymentMethodSetupPayload) -> dict[str, Any]:
+    """Creates a Stripe checkout setup session to add a card/debit payment method."""
+    owner = _get_owner(payload.owner_id)
+    stripe_client = _stripe_client_ready()
+
+    customer_id = str(owner.get("stripe_customer_id") or "").strip()
+    if not customer_id:
+        customer = stripe_client.Customer.create(
+            email=owner.get("email"),
+            metadata={"owner_id": payload.owner_id},
+        )
+        customer_id = str(customer.get("id") or "").strip()
+        if customer_id:
+            try:
+                _get_db().update_many(
+                    "owners",
+                    {"id": payload.owner_id},
+                    {
+                        "stripe_customer_id": customer_id,
+                        "updated_at": _utc_now().isoformat(),
+                    },
+                )
+            except Exception:
+                pass
+
+    session = stripe_client.checkout.Session.create(
+        mode="setup",
+        customer=customer_id,
+        customer_email=owner.get("email") if not customer_id else None,
+        success_url=f"{_app_base_url()}/dashboard/billing?payment_method=added",
+        cancel_url=f"{_app_base_url()}/dashboard/billing?payment_method=cancel",
+        metadata={"owner_id": payload.owner_id, "setup_payment_method": "true"},
+    )
+    return {
+        "setup_url": session.get("url"),
+        "session_id": session.get("id"),
+        "customer_id": customer_id,
+    }
 
 
 @router.get("/plans")

@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any
 
+import stripe
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
@@ -13,6 +14,7 @@ from app.api.middleware.superadmin import require_superadmin
 from app.database.connection import DatabaseConnectionError, SupabaseService
 from app.runtime.preflight import build_preflight_report
 from app.ui_shell import render_admin_dashboard
+from config.settings import get_settings
 
 router = APIRouter(prefix="/admin", tags=["superadmin"])
 
@@ -26,6 +28,26 @@ class FeatureFlagUpdatePayload(BaseModel):
     is_enabled: bool
     enabled_for_plans: list[str] = Field(default_factory=list)
     description: str = Field(default="", max_length=300)
+
+
+class BillingStatusUpdatePayload(BaseModel):
+    status: str = Field(pattern="^(active|inactive|past_due|cancelled|trialing|paused)$")
+    plan: str | None = None
+    reason: str = Field(min_length=3)
+
+
+def _stripe_ready() -> stripe:
+    settings = get_settings()
+    if not settings.stripe_secret_key.strip():
+        raise HTTPException(status_code=503, detail="STRIPE_SECRET_KEY is not configured.")
+    stripe.api_key = settings.stripe_secret_key
+    return stripe
+
+
+def _app_base_url() -> str:
+    settings = get_settings()
+    domain = (settings.next_public_api_url or f"https://{settings.platform_domain}").strip()
+    return domain.rstrip("/")
 
 
 def _safe_int(value: Any) -> int:
@@ -301,5 +323,113 @@ def admin_costs_summary(owner: dict[str, Any] = Depends(require_superadmin)) -> 
         "total_cost_usd": round(total_cents / 100, 2),
         "by_owner": [{"owner_id": k, "cost_cents": v} for k, v in sorted(by_owner.items(), key=lambda x: -x[1])[:50]],
         "by_agent": [{"agent_id": k, "cost_cents": v} for k, v in sorted(by_agent.items(), key=lambda x: -x[1])[:50]],
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+@router.get("/billing/subscriptions")
+def admin_billing_subscriptions(owner: dict[str, Any] = Depends(require_superadmin)) -> dict[str, Any]:
+    del owner
+    try:
+        db = SupabaseService()
+        owners = db.fetch_all("owners")
+    except DatabaseConnectionError as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
+
+    rows = []
+    for row in owners:
+        rows.append(
+            {
+                "owner_id": str(row.get("id") or ""),
+                "email": row.get("email"),
+                "name": row.get("name") or row.get("full_name") or "",
+                "plan": row.get("plan") or row.get("subscription_plan") or "free",
+                "status": row.get("subscription_status") or "inactive",
+                "trial_ends_at": row.get("trial_ends_at"),
+                "next_billing_date": row.get("subscription_current_period_end"),
+                "amount_cents": _safe_int(row.get("subscription_amount_cents")),
+                "stripe_customer_id": row.get("stripe_customer_id") or None,
+                "stripe_subscription_id": row.get("stripe_subscription_id") or None,
+                "billing_exempt": bool(row.get("billing_exempt") or False),
+            }
+        )
+    rows.sort(key=lambda item: str(item.get("email") or ""))
+    return {"count": len(rows), "subscriptions": rows, "generated_at": datetime.now(timezone.utc).isoformat()}
+
+
+@router.post("/billing/subscriptions/{owner_id}/status")
+def admin_billing_update_status(
+    owner_id: str,
+    payload: BillingStatusUpdatePayload,
+    actor: dict[str, Any] = Depends(require_superadmin),
+) -> dict[str, Any]:
+    try:
+        db = SupabaseService()
+        updates: dict[str, Any] = {
+            "subscription_status": payload.status,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }
+        if payload.plan:
+            updates["plan"] = payload.plan
+            updates["subscription_plan"] = payload.plan
+        rows = db.update_many("owners", {"id": owner_id}, updates)
+        db.log_activity(
+            agent_id=None,
+            owner_id=owner_id,
+            action_type="admin_billing_status_update",
+            description=(
+                f"Billing status changed to '{payload.status}' by {actor.get('email') or 'superadmin'}. "
+                f"Reason: {payload.reason}"
+            ),
+            outcome="success",
+            metadata={"actor_email": actor.get("email"), "reason": payload.reason, "plan": payload.plan},
+        )
+    except DatabaseConnectionError as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
+
+    if not rows:
+        raise HTTPException(status_code=404, detail="User not found.")
+    return {"status": "ok", "owner_id": owner_id, "updated": rows[0]}
+
+
+@router.post("/billing/subscriptions/{owner_id}/portal")
+def admin_billing_portal(owner_id: str, owner: dict[str, Any] = Depends(require_superadmin)) -> dict[str, Any]:
+    del owner
+    try:
+        db = SupabaseService()
+        rows = db.fetch_all("owners", {"id": owner_id})
+    except DatabaseConnectionError as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
+    if not rows:
+        raise HTTPException(status_code=404, detail="User not found.")
+
+    customer_id = str(rows[0].get("stripe_customer_id") or "").strip()
+    if not customer_id:
+        raise HTTPException(status_code=404, detail="Owner has no Stripe customer.")
+
+    stripe_client = _stripe_ready()
+    session = stripe_client.billing_portal.Session.create(
+        customer=customer_id,
+        return_url=f"{_app_base_url()}/admin/billing",
+    )
+    return {"owner_id": owner_id, "portal_url": session.get("url"), "customer_id": customer_id}
+
+
+@router.get("/billing/stripe-recommended-events")
+def admin_billing_stripe_recommended_events(owner: dict[str, Any] = Depends(require_superadmin)) -> dict[str, Any]:
+    del owner
+    events = [
+        {"event": "checkout.session.completed", "why": "Activate subscriptions and wallet top-ups after checkout."},
+        {"event": "customer.subscription.updated", "why": "Sync plan/status and period boundaries."},
+        {"event": "customer.subscription.deleted", "why": "Handle cancellations and deprovision paid features."},
+        {"event": "invoice.paid", "why": "Confirm successful recurring payment and clear dunning state."},
+        {"event": "invoice.payment_failed", "why": "Mark past_due and trigger owner follow-up."},
+        {"event": "invoice.upcoming", "why": "Pre-billing reminder and spend/limit visibility."},
+        {"event": "customer.subscription.trial_will_end", "why": "Trial conversion prompts and billing reminder workflows."},
+        {"event": "charge.refunded", "why": "Reconcile wallet/subscription adjustments and audit logs."},
+    ]
+    return {
+        "count": len(events),
+        "events": events,
         "generated_at": datetime.now(timezone.utc).isoformat(),
     }
