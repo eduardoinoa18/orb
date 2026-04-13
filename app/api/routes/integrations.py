@@ -921,4 +921,49 @@ def _test_twilio(credentials: dict[str, str]) -> tuple[bool, str]:
         import twilio
         from twilio.rest import Client
         client = Client(account_sid, auth_token)
-        account = client.
+        account = client.api.accounts(account_sid).fetch()
+        return bool(account), f"Connected to Twilio account {account_sid[:8]}..."
+    except Exception as error:
+        return False, f"Twilio error: {str(error)[:100]}"
+
+
+def _test_openai(api_key: str) -> tuple[bool, str]:
+    """Test OpenAI API connectivity."""
+    if not api_key or not api_key.startswith("sk-"):
+        return False, "Invalid or missing OpenAI API key"
+
+    try:
+        from integrations.openai_client import ask_gpt_mini
+        response = ask_gpt_mini(
+            system="You are a health check service.",
+            prompt="Respond with 'healthy' and nothing else.",
+        )
+        return bool(response), "Connected to OpenAI API" if response else "No response from API"
+    except Exception as error:
+        return False, f"OpenAI API error: {str(error)[:100]}"
+
+
+def _test_stripe(secret_key: str) -> tuple[bool, str]:
+    """Test Stripe API connectivity."""
+    if not secret_key or not secret_key.startswith("sk_"):
+        return False, "Invalid or missing Stripe secret key"
+
+    try:
+        import stripe
+        stripe.api_key = secret_key
+        stripe.Account.retrieve()
+        return True, "Connected to Stripe API"
+    except Exception as error:
+        return False, f"Stripe error: {str(error)[:100]}"
+
+
+def _test_followupboss(api_key: str) -> tuple[bool, str]:
+    """Test Follow Up Boss API connectivity."""
+    if not api_key:
+        return False, "Missing Follow Up Boss API key"
+
+    try:
+        from integrations.followupboss_client import test_connection
+        return test_connection(api_key)
+    except Exception as error:
+        return False, f"Follow Up Boss error: {str(error)[:100]}"
