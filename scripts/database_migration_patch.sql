@@ -283,3 +283,86 @@ CREATE TABLE IF NOT EXISTS public.commander_onboarding_state (
 
 CREATE INDEX IF NOT EXISTS idx_commander_onboarding_state_owner_id
   ON public.commander_onboarding_state(owner_id);
+
+-- 14) Agent identity profiles (persistent per-agent characteristics within owner workspace)
+CREATE TABLE IF NOT EXISTS public.agent_identity_profiles (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  owner_id text NOT NULL,
+  agent_slug text NOT NULL,
+  agent_name text NOT NULL,
+  personality_archetype text DEFAULT 'professional',
+  communication_voice text,
+  decision_bias jsonb DEFAULT '{}'::jsonb,
+  learned_preferences jsonb DEFAULT '{}'::jsonb,
+  autonomy_baseline integer DEFAULT 5,
+  approval_threshold integer DEFAULT 5,
+  interaction_count integer DEFAULT 0,
+  last_interaction_at timestamptz,
+  evolved_traits jsonb DEFAULT '{}'::jsonb,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE(owner_id, agent_slug)
+);
+
+CREATE INDEX IF NOT EXISTS idx_agent_identity_owner_agent
+  ON public.agent_identity_profiles(owner_id, agent_slug);
+CREATE INDEX IF NOT EXISTS idx_agent_identity_interaction_tracking
+  ON public.agent_identity_profiles(owner_id, last_interaction_at DESC);
+
+-- 15) Per-agent memory context (isolated per owner - agent learnings & context snapshots)
+CREATE TABLE IF NOT EXISTS public.agent_memory_contexts (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  owner_id text NOT NULL,
+  agent_slug text NOT NULL,
+  memory_type text NOT NULL DEFAULT 'learning',
+  memory_payload jsonb NOT NULL DEFAULT '{}'::jsonb,
+  relevance_score numeric(3,2) DEFAULT 0.75,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  expires_at timestamptz
+);
+
+CREATE INDEX IF NOT EXISTS idx_agent_memory_owner_agent
+  ON public.agent_memory_contexts(owner_id, agent_slug);
+CREATE INDEX IF NOT EXISTS idx_agent_memory_relevance
+  ON public.agent_memory_contexts(owner_id, relevance_score DESC);
+CREATE INDEX IF NOT EXISTS idx_agent_memory_expiry
+  ON public.agent_memory_contexts(expires_at) WHERE expires_at IS NOT NULL;
+
+-- 16) Agent autonomy governance (per-owner, per-agent approval workflows)
+CREATE TABLE IF NOT EXISTS public.agent_autonomy_rules (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  owner_id text NOT NULL,
+  agent_slug text NOT NULL,
+  rule_type text NOT NULL,
+  action_category text NOT NULL,
+  autonomy_level integer NOT NULL DEFAULT 5,
+  requires_approval boolean NOT NULL DEFAULT false,
+  notification_channel text DEFAULT 'in_app',
+  rule_config jsonb DEFAULT '{}'::jsonb,
+  enabled boolean NOT NULL DEFAULT true,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_autonomy_rules_owner_agent
+  ON public.agent_autonomy_rules(owner_id, agent_slug);
+CREATE INDEX IF NOT EXISTS idx_autonomy_rules_enabled
+  ON public.agent_autonomy_rules(owner_id, enabled);
+
+-- 17) Agent-to-agent collaboration tracking (multi-agent task orchestration metadata)
+CREATE TABLE IF NOT EXISTS public.agent_collaboration_events (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  owner_id text NOT NULL,
+  initiating_agent_slug text NOT NULL,
+  collaborating_agents text[] NOT NULL DEFAULT '{}',
+  task_description text,
+  outcome text,
+  coordination_pattern text,
+  success boolean,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_collaboration_owner_agent
+  ON public.agent_collaboration_events(owner_id, initiating_agent_slug);
+CREATE INDEX IF NOT EXISTS idx_collaboration_success_tracking
+  ON public.agent_collaboration_events(owner_id, success, created_at DESC);

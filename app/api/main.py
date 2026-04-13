@@ -27,6 +27,7 @@ from slowapi.errors import RateLimitExceeded
 from app.api.middleware.rate_limit import limiter
 from app.api.routes import (
     access,
+    agent_identity,
     agents,
     agent_settings,
     aria,
@@ -564,6 +565,7 @@ async def health_check(deep: bool = False) -> dict[str, object]:
     }
 
 
+app.include_router(agent_identity.router)
 app.include_router(agents.router)
 app.include_router(access.router)
 app.include_router(agent_settings.router)
