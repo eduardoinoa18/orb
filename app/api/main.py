@@ -240,6 +240,7 @@ async def jwt_auth_middleware(request: Request, call_next: Callable):
         "/onboarding/plan",
         "/onboarding/first-agent",
         "/onboarding/connect-tool",
+        "/onboarding/admin-bootstrap",
         # Inbound webhooks — signed by external provider, not by JWT
         "/webhooks/stripe",
         "/webhooks/tradingview",
