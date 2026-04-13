@@ -202,3 +202,49 @@ CREATE TABLE IF NOT EXISTS public.owner_billing_controls (
 
 CREATE INDEX IF NOT EXISTS idx_owner_billing_controls_owner_id
   ON public.owner_billing_controls(owner_id);
+
+-- 10) Token usage ledger (model-level usage accounting)
+CREATE TABLE IF NOT EXISTS public.token_usage_ledger (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  owner_id text NOT NULL,
+  agent_slug text,
+  model_name text,
+  input_tokens integer NOT NULL DEFAULT 0,
+  output_tokens integer NOT NULL DEFAULT 0,
+  total_tokens integer NOT NULL DEFAULT 0,
+  cost_cents integer NOT NULL DEFAULT 0,
+  source text NOT NULL DEFAULT 'runtime',
+  request_id text,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_token_usage_ledger_owner_created
+  ON public.token_usage_ledger(owner_id, created_at DESC);
+
+-- 11) Wallet balance + wallet ledger for PAYG top-ups
+CREATE TABLE IF NOT EXISTS public.owner_wallets (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  owner_id text NOT NULL UNIQUE,
+  balance_cents integer NOT NULL DEFAULT 0,
+  currency text NOT NULL DEFAULT 'usd',
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_owner_wallets_owner_id
+  ON public.owner_wallets(owner_id);
+
+CREATE TABLE IF NOT EXISTS public.wallet_transactions (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  owner_id text NOT NULL,
+  wallet_id uuid REFERENCES public.owner_wallets(id) ON DELETE CASCADE,
+  direction text NOT NULL CHECK (direction IN ('credit', 'debit')),
+  amount_cents integer NOT NULL DEFAULT 0,
+  reason text NOT NULL DEFAULT 'manual',
+  stripe_reference text,
+  metadata jsonb DEFAULT '{}'::jsonb,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_wallet_transactions_owner_created
+  ON public.wallet_transactions(owner_id, created_at DESC);

@@ -112,6 +112,61 @@ def _update_owner_billing(owner_id: str, updates: dict[str, object]) -> None:
         return
 
 
+def _credit_wallet_from_checkout(owner_id: str, amount_cents: int, stripe_reference: str | None) -> bool:
+    db = _get_db()
+    if not db:
+        return False
+    if amount_cents <= 0:
+        return False
+
+    try:
+        wallet_response = (
+            db.client.table("owner_wallets")
+            .select("*")
+            .eq("owner_id", owner_id)
+            .limit(1)
+            .execute()
+        )
+        wallets = wallet_response.data or []
+        if wallets:
+            wallet = wallets[0]
+        else:
+            wallet = db.insert_one(
+                "owner_wallets",
+                {
+                    "owner_id": owner_id,
+                    "balance_cents": 0,
+                    "currency": "usd",
+                    "created_at": datetime.now(timezone.utc).isoformat(),
+                    "updated_at": datetime.now(timezone.utc).isoformat(),
+                },
+            )
+
+        wallet_id = wallet.get("id")
+        balance = int(wallet.get("balance_cents") or 0) + int(amount_cents)
+        db.update_many(
+            "owner_wallets",
+            {"id": wallet_id},
+            {"balance_cents": balance, "updated_at": datetime.now(timezone.utc).isoformat()},
+        )
+        db.insert_one(
+            "wallet_transactions",
+            {
+                "owner_id": owner_id,
+                "wallet_id": wallet_id,
+                "direction": "credit",
+                "amount_cents": int(amount_cents),
+                "reason": "stripe_topup",
+                "stripe_reference": stripe_reference,
+                "metadata": {},
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            },
+        )
+        return True
+    except Exception:
+        return False
+
+
 def _plan_agent_limit(plan: str) -> int:
     if plan == "starter":
         return 1
@@ -197,6 +252,22 @@ def _handle_checkout_completed(event: dict) -> dict[str, object]:
     data = event.get("data", {}).get("object", {})
     metadata = data.get("metadata", {}) or {}
     owner_id = str(metadata.get("owner_id") or "")
+    if str(metadata.get("wallet_topup") or "").lower() == "true":
+        if not owner_id:
+            return {"success": False, "reason": "owner_id missing"}
+        amount_cents = int(metadata.get("amount_cents") or data.get("amount_total") or 0)
+        credited = _credit_wallet_from_checkout(
+            owner_id=owner_id,
+            amount_cents=amount_cents,
+            stripe_reference=str(data.get("payment_intent") or data.get("id") or ""),
+        )
+        return {
+            "success": bool(credited),
+            "owner_id": owner_id,
+            "wallet_topup": True,
+            "amount_cents": amount_cents,
+        }
+
     plan = str(metadata.get("plan") or "starter")
     if not owner_id:
         return {"success": False, "reason": "owner_id missing"}

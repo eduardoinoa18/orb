@@ -50,6 +50,27 @@ class BillingControlsPayload(BaseModel):
     auto_refill_amount_usd: int = Field(default=0, ge=0, le=10000)
 
 
+class TokenUsageRecordPayload(BaseModel):
+    """Model-level usage record for token accounting."""
+
+    owner_id: str = Field(min_length=2)
+    agent_slug: str | None = None
+    model_name: str | None = None
+    input_tokens: int = Field(default=0, ge=0)
+    output_tokens: int = Field(default=0, ge=0)
+    total_tokens: int | None = Field(default=None, ge=0)
+    cost_cents: int = Field(default=0, ge=0)
+    source: str = Field(default="runtime")
+    request_id: str | None = None
+
+
+class WalletTopupPayload(BaseModel):
+    """Payload for Stripe wallet top-up checkout sessions."""
+
+    owner_id: str = Field(min_length=2)
+    amount_usd: int = Field(ge=5, le=5000)
+
+
 def _get_db() -> SupabaseService:
     return SupabaseService()
 
@@ -247,6 +268,100 @@ def _activity_spend_since(owner_id: str, since: datetime) -> int:
         return max(0, total)
     except Exception:
         return 0
+
+
+def _token_usage_since(owner_id: str, since: datetime) -> tuple[int, int, int]:
+    """Returns (tokens, cost_cents, row_count) from token_usage_ledger since timestamp."""
+    db = _get_db()
+    try:
+        response = (
+            db.client.table("token_usage_ledger")
+            .select("total_tokens,cost_cents")
+            .eq("owner_id", owner_id)
+            .gte("created_at", since.isoformat())
+            .execute()
+        )
+        rows = response.data or []
+        total_tokens = 0
+        total_cost = 0
+        for row in rows:
+            try:
+                total_tokens += int(row.get("total_tokens") or 0)
+                total_cost += int(row.get("cost_cents") or 0)
+            except (TypeError, ValueError):
+                continue
+        return max(0, total_tokens), max(0, total_cost), len(rows)
+    except Exception:
+        return 0, 0, 0
+
+
+def _safe_wallet_row(owner_id: str) -> dict[str, Any] | None:
+    db = _get_db()
+    try:
+        response = (
+            db.client.table("owner_wallets")
+            .select("*")
+            .eq("owner_id", owner_id)
+            .limit(1)
+            .execute()
+        )
+        rows = response.data or []
+        return rows[0] if rows else None
+    except Exception:
+        return None
+
+
+def _ensure_wallet(owner_id: str) -> dict[str, Any] | None:
+    row = _safe_wallet_row(owner_id)
+    if row:
+        return row
+    db = _get_db()
+    payload = {
+        "owner_id": owner_id,
+        "balance_cents": 0,
+        "currency": "usd",
+        "updated_at": _utc_now().isoformat(),
+        "created_at": _utc_now().isoformat(),
+    }
+    try:
+        inserted = db.insert_one("owner_wallets", payload)
+        return inserted
+    except Exception:
+        return None
+
+
+def _credit_wallet(owner_id: str, amount_cents: int, reason: str, stripe_reference: str | None = None) -> bool:
+    if amount_cents <= 0:
+        return False
+    wallet = _ensure_wallet(owner_id)
+    if not wallet:
+        return False
+    db = _get_db()
+    try:
+        wallet_id = wallet.get("id")
+        current_balance = int(wallet.get("balance_cents") or 0)
+        new_balance = current_balance + int(amount_cents)
+        db.update_many(
+            "owner_wallets",
+            {"id": wallet_id},
+            {"balance_cents": new_balance, "updated_at": _utc_now().isoformat()},
+        )
+        db.insert_one(
+            "wallet_transactions",
+            {
+                "owner_id": owner_id,
+                "wallet_id": wallet_id,
+                "direction": "credit",
+                "amount_cents": int(amount_cents),
+                "reason": reason,
+                "stripe_reference": stripe_reference,
+                "metadata": {},
+                "created_at": _utc_now().isoformat(),
+            },
+        )
+        return True
+    except Exception:
+        return False
 
 
 def _try_upsert_controls(owner_id: str, payload: BillingControlsPayload) -> bool:
@@ -460,24 +575,42 @@ def get_usage(owner_id: str) -> dict[str, Any]:
     controls = _effective_controls(owner)
 
     now = _utc_now()
-    hourly_spend_cents = _activity_spend_since(owner_id, now.replace(minute=0, second=0, microsecond=0))
-    daily_spend_cents = _activity_spend_since(owner_id, now.replace(hour=0, minute=0, second=0, microsecond=0))
-    weekly_spend_cents = _activity_spend_since(owner_id, _week_start(now))
-    monthly_spend_cents = _activity_spend_since(owner_id, _month_start(now))
+    hour_start = now.replace(minute=0, second=0, microsecond=0)
+    day_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    week_start = _week_start(now)
+    month_start = _month_start(now)
+
+    hourly_tokens, hourly_spend_cents, hour_rows = _token_usage_since(owner_id, hour_start)
+    daily_tokens, daily_spend_cents, day_rows = _token_usage_since(owner_id, day_start)
+    weekly_tokens, weekly_spend_cents, week_rows = _token_usage_since(owner_id, week_start)
+    monthly_tokens, monthly_spend_cents, month_rows = _token_usage_since(owner_id, month_start)
+
+    # Backward compatibility fallback when token ledger is not yet populated.
+    if hour_rows == 0:
+        hourly_spend_cents = _activity_spend_since(owner_id, hour_start)
+        hourly_tokens = _tokens_from_cents(hourly_spend_cents)
+    if day_rows == 0:
+        daily_spend_cents = _activity_spend_since(owner_id, day_start)
+        daily_tokens = _tokens_from_cents(daily_spend_cents)
+    if week_rows == 0:
+        weekly_spend_cents = _activity_spend_since(owner_id, week_start)
+        weekly_tokens = _tokens_from_cents(weekly_spend_cents)
+    if month_rows == 0:
+        monthly_spend_cents = _activity_spend_since(owner_id, month_start)
+        monthly_tokens = _tokens_from_cents(monthly_spend_cents)
 
     included_tokens = _token_allowance_for_plan(plan)
-    month_used_tokens = _tokens_from_cents(monthly_spend_cents)
-    remaining = None if included_tokens is None else max(0, included_tokens - month_used_tokens)
+    remaining = None if included_tokens is None else max(0, included_tokens - monthly_tokens)
 
     return {
         "owner_id": owner_id,
         "plan": plan,
         "included_tokens_month": included_tokens,
         "tokens_used": {
-            "hour": _tokens_from_cents(hourly_spend_cents),
-            "day": _tokens_from_cents(daily_spend_cents),
-            "week": _tokens_from_cents(weekly_spend_cents),
-            "month": month_used_tokens,
+            "hour": hourly_tokens,
+            "day": daily_tokens,
+            "week": weekly_tokens,
+            "month": monthly_tokens,
         },
         "cost_used_cents": {
             "hour": hourly_spend_cents,
@@ -488,6 +621,108 @@ def get_usage(owner_id: str) -> dict[str, Any]:
         "tokens_remaining": remaining,
         "limits": controls,
         "payg_active": bool(controls.get("payg_enabled") and remaining == 0 if remaining is not None else controls.get("payg_enabled")),
+        "usage_source": "token_ledger" if month_rows > 0 else "cost_fallback",
+    }
+
+
+@router.post("/usage/record")
+def record_usage(payload: TokenUsageRecordPayload) -> dict[str, Any]:
+    """Records model-level token usage for accurate allowance accounting."""
+    _get_owner(payload.owner_id)
+    db = _get_db()
+    total_tokens = payload.total_tokens if payload.total_tokens is not None else payload.input_tokens + payload.output_tokens
+    try:
+        row = db.insert_one(
+            "token_usage_ledger",
+            {
+                "owner_id": payload.owner_id,
+                "agent_slug": payload.agent_slug,
+                "model_name": payload.model_name,
+                "input_tokens": payload.input_tokens,
+                "output_tokens": payload.output_tokens,
+                "total_tokens": max(0, int(total_tokens)),
+                "cost_cents": payload.cost_cents,
+                "source": payload.source,
+                "request_id": payload.request_id,
+                "created_at": _utc_now().isoformat(),
+            },
+        )
+    except Exception as error:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Token usage ledger is not ready. Run billing migration patch. ({error})",
+        ) from error
+    return {"success": True, "record": row}
+
+
+@router.get("/wallet/{owner_id}")
+def get_wallet(owner_id: str) -> dict[str, Any]:
+    """Returns current PAYG wallet balance for owner."""
+    _get_owner(owner_id)
+    row = _ensure_wallet(owner_id)
+    if not row:
+        raise HTTPException(status_code=503, detail="Wallet storage is not ready. Run billing migration patch.")
+    return {
+        "owner_id": owner_id,
+        "balance_cents": int(row.get("balance_cents") or 0),
+        "currency": str(row.get("currency") or "usd").upper(),
+        "updated_at": _serialize_timestamp(row.get("updated_at")),
+    }
+
+
+@router.get("/wallet-transactions/{owner_id}")
+def get_wallet_transactions(owner_id: str) -> dict[str, Any]:
+    """Returns wallet top-up/debit transaction history for owner."""
+    _get_owner(owner_id)
+    db = _get_db()
+    try:
+        response = (
+            db.client.table("wallet_transactions")
+            .select("id,direction,amount_cents,reason,stripe_reference,created_at")
+            .eq("owner_id", owner_id)
+            .order("created_at", desc=True)
+            .limit(50)
+            .execute()
+        )
+        rows = response.data or []
+    except Exception:
+        rows = []
+    return {"owner_id": owner_id, "transactions": rows}
+
+
+@router.post("/wallet/topup-checkout")
+def create_wallet_topup_checkout(payload: WalletTopupPayload) -> dict[str, Any]:
+    """Creates a Stripe Checkout session for wallet top-ups (PAYG credit)."""
+    owner = _get_owner(payload.owner_id)
+    stripe_client = _stripe_client_ready()
+    amount_cents = int(payload.amount_usd) * 100
+    session = stripe_client.checkout.Session.create(
+        customer=owner.get("stripe_customer_id") or None,
+        customer_email=owner.get("email"),
+        mode="payment",
+        allow_promotion_codes=False,
+        line_items=[
+            {
+                "price_data": {
+                    "currency": "usd",
+                    "product_data": {"name": "ORB PAYG wallet top-up"},
+                    "unit_amount": amount_cents,
+                },
+                "quantity": 1,
+            }
+        ],
+        success_url=f"{_app_base_url()}/dashboard/billing?wallet_topup=success",
+        cancel_url=f"{_app_base_url()}/dashboard/billing?wallet_topup=cancel",
+        metadata={
+            "owner_id": payload.owner_id,
+            "wallet_topup": "true",
+            "amount_cents": str(amount_cents),
+        },
+    )
+    return {
+        "checkout_url": session.get("url"),
+        "session_id": session.get("id"),
+        "amount_cents": amount_cents,
     }
 
 
