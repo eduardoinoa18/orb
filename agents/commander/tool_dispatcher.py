@@ -159,10 +159,16 @@ class ToolDispatcher:
             "hubspot_deal": self._hubspot_deal,
             "hubspot_note": self._hubspot_note,
             "hubspot_search": self._hubspot_search,
-            # Follow Up Boss
+            # Follow Up Boss CRM
+            "fub_search": self._fub_search,
             "fub_contact": self._fub_contact,
             "fub_note": self._fub_note,
-            "fub_search": self._fub_search,
+            "fub_deal": self._fub_deal,
+            "fub_task": self._fub_task,
+            "fub_stage": self._fub_stage,
+            "fub_call": self._fub_call,
+            "fub_smart_lists": self._fub_smart_lists,
+            "fub_tasks_pending": self._fub_tasks_pending,
             # GitHub
             "github_issue": self._github_issue,
             "github_comment": self._github_comment,
@@ -473,8 +479,89 @@ class ToolDispatcher:
         return ToolResult(
             "fub_search",
             True,
-            data=[f"{x['name']} <{x['email']}>" for x in people],
+            data=[
+                f"{x['name']} | {', '.join(x.get('emails', [])[:1])} | Stage: {x.get('stage', 'N/A')} | Tags: {', '.join(x.get('tags', [])[:3])}"
+                for x in people
+            ],
         )
+
+    def _fub_deal(self, p: dict) -> ToolResult:
+        self._guard.require(Permission.CREATE_DEAL, "fub_deal")
+        from integrations.followupboss_client import create_deal, is_followupboss_available
+        if not is_followupboss_available():
+            return ToolResult("fub_deal", False, error="Follow Up Boss not configured.")
+
+        deal = create_deal(
+            person_id=p["person_id"],
+            name=p["name"],
+            price=p.get("price", 0),
+            stage=p.get("stage", "Pre-Approval"),
+            deal_type=p.get("deal_type", "Buyer"),
+            property_address=p.get("address", ""),
+        )
+        return ToolResult("fub_deal", True,
+                          data=f"FUB deal '{p['name']}' created (ID: {deal.get('id')})")
+
+    def _fub_task(self, p: dict) -> ToolResult:
+        self._guard.require(Permission.UPDATE_CONTACT, "fub_task")
+        from integrations.followupboss_client import create_task, is_followupboss_available
+        if not is_followupboss_available():
+            return ToolResult("fub_task", False, error="Follow Up Boss not configured.")
+
+        task = create_task(
+            person_id=p["person_id"],
+            name=p["name"],
+            due_date=p["due_date"],
+            description=p.get("description", ""),
+            assigned_to=p.get("assigned_to"),
+        )
+        return ToolResult("fub_task", True,
+                          data=f"FUB task '{p['name']}' created, due {p['due_date']}")
+
+    def _fub_stage(self, p: dict) -> ToolResult:
+        self._guard.require(Permission.UPDATE_CONTACT, "fub_stage")
+        from integrations.followupboss_client import change_stage, is_followupboss_available
+        if not is_followupboss_available():
+            return ToolResult("fub_stage", False, error="Follow Up Boss not configured.")
+
+        ok = change_stage(person_id=p["person_id"], stage=p["stage"])
+        return ToolResult("fub_stage", ok,
+                          data=f"Contact {p['person_id']} moved to stage '{p['stage']}'")
+
+    def _fub_call(self, p: dict) -> ToolResult:
+        self._guard.require(Permission.MAKE_PHONE_CALL, "fub_call")
+        from integrations.followupboss_client import log_call, is_followupboss_available
+        if not is_followupboss_available():
+            return ToolResult("fub_call", False, error="Follow Up Boss not configured.")
+
+        result = log_call(
+            person_id=p["person_id"],
+            outcome=p.get("outcome", "Connected"),
+            duration_seconds=p.get("duration", 0),
+            note=p.get("note", ""),
+        )
+        return ToolResult("fub_call", True,
+                          data=f"Call logged for contact {p['person_id']} — {p.get('outcome', 'Connected')}")
+
+    def _fub_smart_lists(self, p: dict) -> ToolResult:
+        self._guard.require(Permission.READ_CONTACTS, "fub_smart_lists")
+        from integrations.followupboss_client import get_smart_lists, is_followupboss_available
+        if not is_followupboss_available():
+            return ToolResult("fub_smart_lists", False, error="Follow Up Boss not configured.")
+
+        lists = get_smart_lists()
+        return ToolResult("fub_smart_lists", True,
+                          data=[f"{sl['name']} ({sl['count']} contacts)" for sl in lists])
+
+    def _fub_tasks_pending(self, p: dict) -> ToolResult:
+        self._guard.require(Permission.READ_CONTACTS, "fub_tasks_pending")
+        from integrations.followupboss_client import get_tasks, is_followupboss_available
+        if not is_followupboss_available():
+            return ToolResult("fub_tasks_pending", False, error="Follow Up Boss not configured.")
+
+        tasks = get_tasks(person_id=p.get("person_id"), status="pending", limit=p.get("limit", 15))
+        return ToolResult("fub_tasks_pending", True,
+                          data=[f"[{t['dueDate']}] {t['name']} (contact: {t['personId']})" for t in tasks])
 
     # ---------------------------------------------------------------------------
     # GitHub handlers

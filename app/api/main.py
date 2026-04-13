@@ -36,6 +36,7 @@ from app.api.routes import (
     commander_settings,
     computer_use,
     content,
+    dashboard_config,
     dashboard,
     onboarding,
     optimization,
@@ -586,3 +587,4 @@ app.include_router(wholesale.router)
 app.include_router(superadmin.router)
 app.include_router(websocket.router)
 app.include_router(webhooks.router)
+app.include_router(dashboard_config.router)
