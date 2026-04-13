@@ -256,3 +256,30 @@ CREATE INDEX IF NOT EXISTS idx_wallet_transactions_owner_created
 CREATE UNIQUE INDEX IF NOT EXISTS idx_wallet_transactions_stripe_ref_unique
   ON public.wallet_transactions(stripe_reference)
   WHERE stripe_reference IS NOT NULL;
+
+-- 12) Owner AI routing preferences (platform default vs BYOK vs hybrid fallback)
+CREATE TABLE IF NOT EXISTS public.owner_ai_routing_prefs (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  owner_id text NOT NULL UNIQUE,
+  mode text NOT NULL DEFAULT 'platform_default' CHECK (mode IN ('platform_default', 'byok_only', 'hybrid_fallback')),
+  fallback_to_platform boolean NOT NULL DEFAULT true,
+  lock_to_owner_keys boolean NOT NULL DEFAULT true,
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_owner_ai_routing_prefs_owner_id
+  ON public.owner_ai_routing_prefs(owner_id);
+
+-- 13) Commander post-onboarding progress (second-stage guided setup)
+CREATE TABLE IF NOT EXISTS public.commander_onboarding_state (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  owner_id text NOT NULL UNIQUE,
+  steps jsonb NOT NULL DEFAULT '[]'::jsonb,
+  completed boolean NOT NULL DEFAULT false,
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_commander_onboarding_state_owner_id
+  ON public.commander_onboarding_state(owner_id);

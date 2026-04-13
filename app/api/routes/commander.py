@@ -357,6 +357,149 @@ class FeedbackPayload(BaseModel):
     feedback: str = Field(default="")
 
 
+class CommanderSetupStepUpdatePayload(BaseModel):
+    owner_id: str = Field(min_length=2)
+    step_key: str = Field(min_length=2)
+    done: bool = True
+
+
+class AIRoutingPreferencesPayload(BaseModel):
+    owner_id: str = Field(min_length=2)
+    mode: str = Field(pattern="^(platform_default|byok_only|hybrid_fallback)$")
+    fallback_to_platform: bool = True
+    lock_to_owner_keys: bool = True
+
+
+def _default_setup_steps() -> list[dict[str, Any]]:
+    return [
+        {
+            "key": "connect_channels",
+            "title": "Connect your channels",
+            "description": "Link email/SMS/CRM so agents can execute real work.",
+            "done": False,
+        },
+        {
+            "key": "set_budget_controls",
+            "title": "Set token and cost controls",
+            "description": "Define hourly/daily/weekly/monthly caps and PAYG behavior.",
+            "done": False,
+        },
+        {
+            "key": "choose_ai_routing",
+            "title": "Choose AI routing",
+            "description": "Decide between platform default, BYO-only, or hybrid fallback.",
+            "done": False,
+        },
+        {
+            "key": "confirm_privacy",
+            "title": "Confirm privacy profile",
+            "description": "Your workspace memory and learned skills are isolated per owner.",
+            "done": False,
+        },
+    ]
+
+
+def _get_owner(owner_id: str) -> dict[str, Any]:
+    db = _db()
+    if not db:
+        raise HTTPException(status_code=503, detail="Database unavailable.")
+    try:
+        owners = db.fetch_all("owners", {"id": owner_id})
+    except DatabaseConnectionError as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
+    if not owners:
+        raise HTTPException(status_code=404, detail="Owner not found.")
+    return owners[0]
+
+
+def _get_ai_routing(owner_id: str) -> dict[str, Any]:
+    db = _db()
+    default_row = {
+        "owner_id": owner_id,
+        "mode": "platform_default",
+        "fallback_to_platform": True,
+        "lock_to_owner_keys": True,
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    if not db:
+        return default_row
+    try:
+        rows = db.fetch_all("owner_ai_routing_prefs", {"owner_id": owner_id})
+        if rows:
+            return rows[0]
+    except DatabaseConnectionError:
+        return default_row
+    return default_row
+
+
+def _save_ai_routing(payload: AIRoutingPreferencesPayload) -> dict[str, Any]:
+    db = _db()
+    data = {
+        "owner_id": payload.owner_id,
+        "mode": payload.mode,
+        "fallback_to_platform": payload.fallback_to_platform,
+        "lock_to_owner_keys": payload.lock_to_owner_keys,
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    if not db:
+        return data
+    try:
+        existing = db.fetch_all("owner_ai_routing_prefs", {"owner_id": payload.owner_id})
+        if existing:
+            db.update_many("owner_ai_routing_prefs", {"owner_id": payload.owner_id}, data)
+        else:
+            data["created_at"] = datetime.now(timezone.utc).isoformat()
+            db.insert_one("owner_ai_routing_prefs", data)
+    except DatabaseConnectionError:
+        pass
+    return data
+
+
+def _get_setup_state(owner_id: str) -> dict[str, Any]:
+    db = _db()
+    default_state = {
+        "owner_id": owner_id,
+        "completed": False,
+        "steps": _default_setup_steps(),
+    }
+    if not db:
+        return default_state
+    try:
+        rows = db.fetch_all("commander_onboarding_state", {"owner_id": owner_id})
+        if rows:
+            row = rows[0]
+            return {
+                "owner_id": owner_id,
+                "completed": bool(row.get("completed") or False),
+                "steps": row.get("steps") or _default_setup_steps(),
+            }
+    except DatabaseConnectionError:
+        return default_state
+    return default_state
+
+
+def _save_setup_state(owner_id: str, steps: list[dict[str, Any]], completed: bool) -> dict[str, Any]:
+    db = _db()
+    payload = {
+        "owner_id": owner_id,
+        "steps": steps,
+        "completed": completed,
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    if not db:
+        return payload
+    try:
+        existing = db.fetch_all("commander_onboarding_state", {"owner_id": owner_id})
+        if existing:
+            db.update_many("commander_onboarding_state", {"owner_id": owner_id}, payload)
+        else:
+            payload["created_at"] = datetime.now(timezone.utc).isoformat()
+            db.insert_one("commander_onboarding_state", payload)
+    except DatabaseConnectionError:
+        pass
+    return payload
+
+
 # ─── History & Skills Endpoints ──────────────────────────────────────────────
 
 
@@ -701,3 +844,95 @@ def commander_email_dispatch_alert(payload: EmailDispatchAlertPayload) -> dict[s
     html = "<br>".join(message.splitlines())
     email_result = send_resend_email(to_email=owner_email, subject=payload.subject, html=html)
     return {"status": "sent", "owner_id": payload.owner_id, "email": email_result}
+
+
+@router.get("/ai-routing/{owner_id}")
+def commander_ai_routing(owner_id: str) -> dict[str, Any]:
+    """Returns how this owner wants AI calls to route between BYO and platform keys."""
+    _get_owner(owner_id)
+    prefs = _get_ai_routing(owner_id)
+    return {
+        "owner_id": owner_id,
+        "preferences": prefs,
+        "modes": [
+            {
+                "key": "platform_default",
+                "label": "Platform default brain",
+                "summary": "Use ORB-managed keys and billing by default.",
+            },
+            {
+                "key": "byok_only",
+                "label": "Bring your own API only",
+                "summary": "Use only your connected API keys. No platform fallback.",
+            },
+            {
+                "key": "hybrid_fallback",
+                "label": "Hybrid fallback",
+                "summary": "Use your keys first, then fallback to ORB PAYG when your quota is exhausted.",
+            },
+        ],
+    }
+
+
+@router.post("/ai-routing/{owner_id}")
+def commander_ai_routing_update(owner_id: str, payload: AIRoutingPreferencesPayload) -> dict[str, Any]:
+    """Updates owner AI routing preference between default/BYOK/hybrid."""
+    if payload.owner_id != owner_id:
+        raise HTTPException(status_code=400, detail="Owner mismatch in routing payload.")
+    _get_owner(owner_id)
+    saved = _save_ai_routing(payload)
+    return {"status": "updated", "owner_id": owner_id, "preferences": saved}
+
+
+@router.get("/onboarding-setup/{owner_id}")
+def commander_onboarding_setup(owner_id: str) -> dict[str, Any]:
+    """Second-stage Commander onboarding guide shown after platform onboarding."""
+    _get_owner(owner_id)
+    setup = _get_setup_state(owner_id)
+    routing = _get_ai_routing(owner_id)
+    return {
+        "owner_id": owner_id,
+        "completed": setup.get("completed", False),
+        "steps": setup.get("steps", []),
+        "ai_routing": routing,
+        "policy": {
+            "default_brain": "ORB provides a managed AI brain by default so users can start immediately.",
+            "byok_behavior": "If you connect your own API keys, you can choose BYOK-only or hybrid fallback.",
+            "fallback_behavior": "In hybrid mode, usage attempts your key first; when quota/rate limits are hit, ORB can continue with PAYG if enabled.",
+            "privacy": "Owner memory, skills, chat history, and automation context are isolated per owner_id and are never shared across workspaces.",
+        },
+    }
+
+
+@router.post("/onboarding-setup/{owner_id}/step")
+def commander_onboarding_setup_step(owner_id: str, payload: CommanderSetupStepUpdatePayload) -> dict[str, Any]:
+    """Marks a specific Commander setup step as done/undone."""
+    if payload.owner_id != owner_id:
+        raise HTTPException(status_code=400, detail="Owner mismatch in setup payload.")
+    _get_owner(owner_id)
+    state = _get_setup_state(owner_id)
+    steps = list(state.get("steps") or _default_setup_steps())
+    updated = False
+    for idx, step in enumerate(steps):
+        if str(step.get("key") or "") == payload.step_key:
+            steps[idx] = {**step, "done": payload.done}
+            updated = True
+            break
+    if not updated:
+        raise HTTPException(status_code=404, detail="Setup step not found.")
+    completed = all(bool(step.get("done")) for step in steps)
+    saved = _save_setup_state(owner_id, steps, completed)
+    return {"status": "updated", "state": saved}
+
+
+@router.post("/onboarding-setup/{owner_id}/complete")
+def commander_onboarding_setup_complete(owner_id: str) -> dict[str, Any]:
+    """Completes Commander second-stage onboarding for this owner."""
+    _get_owner(owner_id)
+    state = _get_setup_state(owner_id)
+    steps = [
+        {**step, "done": True}
+        for step in (state.get("steps") or _default_setup_steps())
+    ]
+    saved = _save_setup_state(owner_id, steps, True)
+    return {"status": "completed", "state": saved}
