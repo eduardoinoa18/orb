@@ -182,3 +182,23 @@ ON CONFLICT (flag_name) DO UPDATE SET
   enabled_for_plans = EXCLUDED.enabled_for_plans,
   is_enabled = EXCLUDED.is_enabled,
   updated_at = now();
+
+-- 9) Billing governance controls (token caps + PAYG settings)
+CREATE TABLE IF NOT EXISTS public.owner_billing_controls (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  owner_id text NOT NULL,
+  hourly_token_cap integer NOT NULL DEFAULT 25000,
+  daily_token_cap integer NOT NULL DEFAULT 100000,
+  weekly_token_cap integer NOT NULL DEFAULT 500000,
+  monthly_token_cap integer NOT NULL DEFAULT 1000000,
+  payg_enabled boolean NOT NULL DEFAULT true,
+  auto_refill_enabled boolean NOT NULL DEFAULT false,
+  auto_refill_threshold_tokens integer NOT NULL DEFAULT 0,
+  auto_refill_amount_usd integer NOT NULL DEFAULT 0,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE(owner_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_owner_billing_controls_owner_id
+  ON public.owner_billing_controls(owner_id);

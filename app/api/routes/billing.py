@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import stripe
@@ -35,6 +35,19 @@ class AddonCheckoutPayload(BaseModel):
 
     owner_id: str = Field(min_length=2)
     agent: str = Field(pattern="^(rex|aria|nova|orion|sage|atlas|commander)$")
+
+
+class BillingControlsPayload(BaseModel):
+    """Payload for owner-level token governance and PAYG behavior."""
+
+    hourly_token_cap: int = Field(ge=0, le=500000)
+    daily_token_cap: int = Field(ge=0, le=5000000)
+    weekly_token_cap: int = Field(ge=0, le=20000000)
+    monthly_token_cap: int = Field(ge=0, le=100000000)
+    payg_enabled: bool = True
+    auto_refill_enabled: bool = False
+    auto_refill_threshold_tokens: int = Field(default=0, ge=0, le=50000000)
+    auto_refill_amount_usd: int = Field(default=0, ge=0, le=10000)
 
 
 def _get_db() -> SupabaseService:
@@ -138,6 +151,130 @@ def _serialize_timestamp(value: Any) -> str | None:
     return str(value)
 
 
+def _token_allowance_for_plan(plan: str) -> int | None:
+    normalized = (plan or "").strip().lower()
+    if normalized == "starter":
+        return 50000
+    if normalized == "professional":
+        return 200000
+    if normalized == "full_team":
+        # Treated as effectively unlimited for governance views.
+        return None
+    return 10000
+
+
+def _tokens_from_cents(cents: int) -> int:
+    # Conservative conversion used for live governance meter when model-level token
+    # telemetry is not available yet: $1 ~= 10k tokens.
+    return max(0, int(cents) * 100)
+
+
+def _utc_now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _month_start(dt: datetime) -> datetime:
+    return dt.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+
+
+def _week_start(dt: datetime) -> datetime:
+    # Monday start
+    monday = dt.weekday()
+    anchored = dt.replace(hour=0, minute=0, second=0, microsecond=0)
+    return anchored - timedelta(days=monday)
+
+
+def _safe_fetch_owner_controls(owner_id: str) -> dict[str, Any] | None:
+    db = _get_db()
+    try:
+        response = (
+            db.client.table("owner_billing_controls")
+            .select("*")
+            .eq("owner_id", owner_id)
+            .limit(1)
+            .execute()
+        )
+        rows = response.data or []
+        return rows[0] if rows else None
+    except Exception:
+        return None
+
+
+def _default_controls_from_plan(plan: str) -> dict[str, Any]:
+    allowance = _token_allowance_for_plan(plan)
+    monthly_cap = allowance if allowance is not None else 2000000
+    return {
+        "hourly_token_cap": min(25000, monthly_cap),
+        "daily_token_cap": min(100000, monthly_cap),
+        "weekly_token_cap": min(500000, monthly_cap),
+        "monthly_token_cap": monthly_cap,
+        "payg_enabled": True,
+        "auto_refill_enabled": False,
+        "auto_refill_threshold_tokens": 0,
+        "auto_refill_amount_usd": 0,
+    }
+
+
+def _effective_controls(owner: dict[str, Any]) -> dict[str, Any]:
+    plan = str(owner.get("plan") or owner.get("subscription_plan") or "free").lower()
+    defaults = _default_controls_from_plan(plan)
+    stored = _safe_fetch_owner_controls(str(owner.get("id") or ""))
+    if not stored:
+        return defaults
+    for key in list(defaults.keys()):
+        if key in stored and stored[key] is not None:
+            defaults[key] = stored[key]
+    return defaults
+
+
+def _activity_spend_since(owner_id: str, since: datetime) -> int:
+    db = _get_db()
+    try:
+        response = (
+            db.client.table("activity_log")
+            .select("cost_cents")
+            .eq("owner_id", owner_id)
+            .gte("created_at", since.isoformat())
+            .execute()
+        )
+        rows = response.data or []
+        total = 0
+        for row in rows:
+            try:
+                total += int(row.get("cost_cents") or 0)
+            except (TypeError, ValueError):
+                continue
+        return max(0, total)
+    except Exception:
+        return 0
+
+
+def _try_upsert_controls(owner_id: str, payload: BillingControlsPayload) -> bool:
+    db = _get_db()
+    data = {
+        "owner_id": owner_id,
+        "hourly_token_cap": payload.hourly_token_cap,
+        "daily_token_cap": payload.daily_token_cap,
+        "weekly_token_cap": payload.weekly_token_cap,
+        "monthly_token_cap": payload.monthly_token_cap,
+        "payg_enabled": payload.payg_enabled,
+        "auto_refill_enabled": payload.auto_refill_enabled,
+        "auto_refill_threshold_tokens": payload.auto_refill_threshold_tokens,
+        "auto_refill_amount_usd": payload.auto_refill_amount_usd,
+        "updated_at": _utc_now().isoformat(),
+    }
+    try:
+        existing = _safe_fetch_owner_controls(owner_id)
+        if existing and existing.get("id"):
+            db.update_many("owner_billing_controls", {"id": existing["id"]}, data)
+        else:
+            data["created_at"] = _utc_now().isoformat()
+            db.insert_one("owner_billing_controls", data)
+        return True
+    except Exception:
+        return False
+
+
 @router.post("/create-checkout")
 def create_checkout(payload: CheckoutPayload) -> dict[str, Any]:
     """Creates a Stripe Checkout session for subscription signup."""
@@ -191,7 +328,20 @@ def create_portal_session(payload: PortalPayload) -> dict[str, Any]:
 @router.get("/plans")
 def billing_plans() -> dict[str, Any]:
     """Returns pricing catalog for dashboard and marketing integrations."""
-    return {"plans": _plan_catalog(), "addons": _addon_price_map()}
+    plans = _plan_catalog()
+    plans_list = [
+        {
+            "name": name,
+            "display": name.replace("_", " ").title(),
+            "price_monthly": details["monthly"],
+            "price_annual": details["annual"],
+            "included_agents": details["included_agents"],
+            "features": details["features"],
+            "agents": details["features"],
+        }
+        for name, details in plans.items()
+    ]
+    return {"plans": plans_list, "plans_by_key": plans, "addons": _addon_price_map()}
 
 
 @router.get("/upgrade-preview/{owner_id}")
@@ -251,9 +401,10 @@ def create_addon_checkout(payload: AddonCheckoutPayload) -> dict[str, Any]:
 def get_subscription(owner_id: str) -> dict[str, Any]:
     """Returns current billing/subscription status for an owner."""
     owner = _get_owner(owner_id)
+    plan = owner.get("plan") or owner.get("subscription_plan") or "free"
     return {
         "owner_id": owner_id,
-        "plan": owner.get("plan") or owner.get("subscription_plan") or "free",
+        "plan": plan,
         "status": owner.get("subscription_status") or "inactive",
         "next_billing_date": _serialize_timestamp(owner.get("subscription_current_period_end")),
         "trial_ends_at": _serialize_timestamp(owner.get("trial_ends_at")),
@@ -261,4 +412,205 @@ def get_subscription(owner_id: str) -> dict[str, Any]:
         "card_last_4": owner.get("stripe_card_last4") or None,
         "stripe_customer_id": owner.get("stripe_customer_id") or None,
         "stripe_subscription_id": owner.get("stripe_subscription_id") or None,
+        "included_tokens": _token_allowance_for_plan(str(plan)),
+        "spend_limit_cents": owner.get("spend_limit_cents") or owner.get("monthly_ai_budget_cents") or 0,
     }
+
+
+@router.get("/trial-status/{owner_id}")
+def get_trial_status(owner_id: str) -> dict[str, Any]:
+    """Returns trial countdown and conversion status for owner billing UX."""
+    owner = _get_owner(owner_id)
+    trial_raw = owner.get("trial_ends_at")
+    now = _utc_now()
+
+    trial_dt: datetime | None = None
+    if isinstance(trial_raw, datetime):
+        trial_dt = trial_raw if trial_raw.tzinfo else trial_raw.replace(tzinfo=timezone.utc)
+    elif isinstance(trial_raw, str) and trial_raw.strip():
+        parsed = trial_raw.replace("Z", "+00:00")
+        try:
+            trial_dt = datetime.fromisoformat(parsed)
+            if trial_dt.tzinfo is None:
+                trial_dt = trial_dt.replace(tzinfo=timezone.utc)
+        except ValueError:
+            trial_dt = None
+
+    days_left = 0
+    is_trial = False
+    if trial_dt is not None:
+        delta = trial_dt - now
+        days_left = max(0, int(delta.total_seconds() // 86400))
+        is_trial = delta.total_seconds() > 0
+
+    return {
+        "owner_id": owner_id,
+        "is_trial": is_trial,
+        "trial_ends_at": _serialize_timestamp(trial_raw),
+        "days_left": days_left,
+        "subscription_status": owner.get("subscription_status") or "inactive",
+    }
+
+
+@router.get("/usage/{owner_id}")
+def get_usage(owner_id: str) -> dict[str, Any]:
+    """Returns token/cost consumption against owner-defined usage controls."""
+    owner = _get_owner(owner_id)
+    plan = str(owner.get("plan") or owner.get("subscription_plan") or "free").lower()
+    controls = _effective_controls(owner)
+
+    now = _utc_now()
+    hourly_spend_cents = _activity_spend_since(owner_id, now.replace(minute=0, second=0, microsecond=0))
+    daily_spend_cents = _activity_spend_since(owner_id, now.replace(hour=0, minute=0, second=0, microsecond=0))
+    weekly_spend_cents = _activity_spend_since(owner_id, _week_start(now))
+    monthly_spend_cents = _activity_spend_since(owner_id, _month_start(now))
+
+    included_tokens = _token_allowance_for_plan(plan)
+    month_used_tokens = _tokens_from_cents(monthly_spend_cents)
+    remaining = None if included_tokens is None else max(0, included_tokens - month_used_tokens)
+
+    return {
+        "owner_id": owner_id,
+        "plan": plan,
+        "included_tokens_month": included_tokens,
+        "tokens_used": {
+            "hour": _tokens_from_cents(hourly_spend_cents),
+            "day": _tokens_from_cents(daily_spend_cents),
+            "week": _tokens_from_cents(weekly_spend_cents),
+            "month": month_used_tokens,
+        },
+        "cost_used_cents": {
+            "hour": hourly_spend_cents,
+            "day": daily_spend_cents,
+            "week": weekly_spend_cents,
+            "month": monthly_spend_cents,
+        },
+        "tokens_remaining": remaining,
+        "limits": controls,
+        "payg_active": bool(controls.get("payg_enabled") and remaining == 0 if remaining is not None else controls.get("payg_enabled")),
+    }
+
+
+@router.get("/controls/{owner_id}")
+def get_billing_controls(owner_id: str) -> dict[str, Any]:
+    """Returns current token controls and PAYG behavior for an owner."""
+    owner = _get_owner(owner_id)
+    controls = _effective_controls(owner)
+    return {"owner_id": owner_id, "controls": controls}
+
+
+@router.post("/controls/{owner_id}")
+def update_billing_controls(owner_id: str, payload: BillingControlsPayload) -> dict[str, Any]:
+    """Persists owner-level usage caps and PAYG settings."""
+    _get_owner(owner_id)
+    if payload.monthly_token_cap and payload.weekly_token_cap > payload.monthly_token_cap:
+        raise HTTPException(status_code=400, detail="Weekly cap cannot exceed monthly cap.")
+    if payload.weekly_token_cap and payload.daily_token_cap > payload.weekly_token_cap:
+        raise HTTPException(status_code=400, detail="Daily cap cannot exceed weekly cap.")
+    if payload.daily_token_cap and payload.hourly_token_cap > payload.daily_token_cap:
+        raise HTTPException(status_code=400, detail="Hourly cap cannot exceed daily cap.")
+
+    if not _try_upsert_controls(owner_id, payload):
+        raise HTTPException(
+            status_code=503,
+            detail="Billing controls storage is not ready. Run the latest billing migration patch.",
+        )
+
+    return {"success": True, "owner_id": owner_id, "controls": payload.model_dump()}
+
+
+@router.get("/payment-methods/{owner_id}")
+def get_payment_methods(owner_id: str) -> dict[str, Any]:
+    """Returns saved Stripe payment methods for owner self-serve billing."""
+    owner = _get_owner(owner_id)
+    customer_id = str(owner.get("stripe_customer_id") or "").strip()
+    if not customer_id:
+        return {"owner_id": owner_id, "payment_methods": [], "default_payment_method": None}
+
+    stripe_client = _stripe_client_ready()
+    try:
+        customer = stripe_client.Customer.retrieve(customer_id)
+        default_id = None
+        invoice_settings = customer.get("invoice_settings") or {}
+        if isinstance(invoice_settings, dict):
+            default_id = invoice_settings.get("default_payment_method")
+
+        methods = stripe_client.PaymentMethod.list(customer=customer_id, type="card", limit=10)
+        serialized = []
+        for method in (methods.data or []):
+            card = method.get("card") or {}
+            serialized.append(
+                {
+                    "id": method.get("id"),
+                    "brand": card.get("brand"),
+                    "last4": card.get("last4"),
+                    "exp_month": card.get("exp_month"),
+                    "exp_year": card.get("exp_year"),
+                    "is_default": method.get("id") == default_id,
+                }
+            )
+        return {
+            "owner_id": owner_id,
+            "payment_methods": serialized,
+            "default_payment_method": default_id,
+        }
+    except Exception as error:
+        raise HTTPException(status_code=502, detail=f"Could not fetch payment methods: {error}") from error
+
+
+@router.get("/charges/{owner_id}")
+def get_recent_charges(owner_id: str) -> dict[str, Any]:
+    """Returns recent Stripe invoices or a usage-cost fallback ledger."""
+    owner = _get_owner(owner_id)
+    customer_id = str(owner.get("stripe_customer_id") or "").strip()
+
+    if customer_id:
+        stripe_client = _stripe_client_ready()
+        try:
+            invoices = stripe_client.Invoice.list(customer=customer_id, limit=20)
+            rows = []
+            for inv in invoices.data or []:
+                rows.append(
+                    {
+                        "id": inv.get("id"),
+                        "amount_cents": inv.get("amount_paid") or inv.get("amount_due") or 0,
+                        "currency": (inv.get("currency") or "usd").upper(),
+                        "status": inv.get("status") or "unknown",
+                        "description": inv.get("description") or "ORB subscription charge",
+                        "created_at": _serialize_timestamp(inv.get("created")),
+                        "invoice_pdf": inv.get("invoice_pdf"),
+                    }
+                )
+            return {"owner_id": owner_id, "charges": rows, "source": "stripe"}
+        except Exception:
+            # Continue to fallback below.
+            pass
+
+    db = _get_db()
+    try:
+        response = (
+            db.client.table("activity_log")
+            .select("id,cost_cents,description,created_at")
+            .eq("owner_id", owner_id)
+            .order("created_at", desc=True)
+            .limit(30)
+            .execute()
+        )
+        rows = response.data or []
+    except Exception:
+        rows = []
+
+    charges = [
+        {
+            "id": row.get("id"),
+            "amount_cents": row.get("cost_cents") or 0,
+            "currency": "USD",
+            "status": "posted",
+            "description": row.get("description") or "ORB metered usage",
+            "created_at": _serialize_timestamp(row.get("created_at")),
+            "invoice_pdf": None,
+        }
+        for row in rows
+        if int(row.get("cost_cents") or 0) > 0
+    ]
+    return {"owner_id": owner_id, "charges": charges, "source": "usage_log"}
