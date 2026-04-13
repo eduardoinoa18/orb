@@ -221,6 +221,10 @@ CREATE TABLE IF NOT EXISTS public.token_usage_ledger (
 CREATE INDEX IF NOT EXISTS idx_token_usage_ledger_owner_created
   ON public.token_usage_ledger(owner_id, created_at DESC);
 
+CREATE UNIQUE INDEX IF NOT EXISTS idx_token_usage_ledger_request_id_unique
+  ON public.token_usage_ledger(request_id)
+  WHERE request_id IS NOT NULL;
+
 -- 11) Wallet balance + wallet ledger for PAYG top-ups
 CREATE TABLE IF NOT EXISTS public.owner_wallets (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -248,3 +252,7 @@ CREATE TABLE IF NOT EXISTS public.wallet_transactions (
 
 CREATE INDEX IF NOT EXISTS idx_wallet_transactions_owner_created
   ON public.wallet_transactions(owner_id, created_at DESC);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_wallet_transactions_stripe_ref_unique
+  ON public.wallet_transactions(stripe_reference)
+  WHERE stripe_reference IS NOT NULL;

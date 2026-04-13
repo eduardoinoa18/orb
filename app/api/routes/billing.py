@@ -62,6 +62,8 @@ class TokenUsageRecordPayload(BaseModel):
     cost_cents: int = Field(default=0, ge=0)
     source: str = Field(default="runtime")
     request_id: str | None = None
+    enforce_limits: bool = True
+    auto_debit_wallet: bool = True
 
 
 class WalletTopupPayload(BaseModel):
@@ -364,6 +366,42 @@ def _credit_wallet(owner_id: str, amount_cents: int, reason: str, stripe_referen
         return False
 
 
+def _debit_wallet(owner_id: str, amount_cents: int, reason: str, metadata: dict[str, Any] | None = None) -> bool:
+    if amount_cents <= 0:
+        return True
+    wallet = _ensure_wallet(owner_id)
+    if not wallet:
+        return False
+    db = _get_db()
+    try:
+        wallet_id = wallet.get("id")
+        current_balance = int(wallet.get("balance_cents") or 0)
+        if current_balance < int(amount_cents):
+            return False
+        new_balance = current_balance - int(amount_cents)
+        db.update_many(
+            "owner_wallets",
+            {"id": wallet_id},
+            {"balance_cents": new_balance, "updated_at": _utc_now().isoformat()},
+        )
+        db.insert_one(
+            "wallet_transactions",
+            {
+                "owner_id": owner_id,
+                "wallet_id": wallet_id,
+                "direction": "debit",
+                "amount_cents": int(amount_cents),
+                "reason": reason,
+                "stripe_reference": None,
+                "metadata": metadata or {},
+                "created_at": _utc_now().isoformat(),
+            },
+        )
+        return True
+    except Exception:
+        return False
+
+
 def _try_upsert_controls(owner_id: str, payload: BillingControlsPayload) -> bool:
     db = _get_db()
     data = {
@@ -628,9 +666,69 @@ def get_usage(owner_id: str) -> dict[str, Any]:
 @router.post("/usage/record")
 def record_usage(payload: TokenUsageRecordPayload) -> dict[str, Any]:
     """Records model-level token usage for accurate allowance accounting."""
-    _get_owner(payload.owner_id)
+    owner = _get_owner(payload.owner_id)
     db = _get_db()
     total_tokens = payload.total_tokens if payload.total_tokens is not None else payload.input_tokens + payload.output_tokens
+
+    controls = _effective_controls(owner)
+    now = _utc_now()
+    hour_start = now.replace(minute=0, second=0, microsecond=0)
+    day_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    week_start = _week_start(now)
+    month_start = _month_start(now)
+
+    hour_tokens, _, _ = _token_usage_since(payload.owner_id, hour_start)
+    day_tokens, _, _ = _token_usage_since(payload.owner_id, day_start)
+    week_tokens, _, _ = _token_usage_since(payload.owner_id, week_start)
+    month_tokens, _, _ = _token_usage_since(payload.owner_id, month_start)
+
+    projected_hour = hour_tokens + max(0, int(total_tokens))
+    projected_day = day_tokens + max(0, int(total_tokens))
+    projected_week = week_tokens + max(0, int(total_tokens))
+    projected_month = month_tokens + max(0, int(total_tokens))
+
+    limit_violations: list[str] = []
+    if projected_hour > int(controls.get("hourly_token_cap") or 0):
+        limit_violations.append("hourly_token_cap")
+    if projected_day > int(controls.get("daily_token_cap") or 0):
+        limit_violations.append("daily_token_cap")
+    if projected_week > int(controls.get("weekly_token_cap") or 0):
+        limit_violations.append("weekly_token_cap")
+    if projected_month > int(controls.get("monthly_token_cap") or 0):
+        limit_violations.append("monthly_token_cap")
+
+    if payload.enforce_limits and limit_violations:
+        raise HTTPException(
+            status_code=429,
+            detail={
+                "message": "Usage blocked by token governance limits.",
+                "violations": limit_violations,
+            },
+        )
+
+    plan = str(owner.get("plan") or owner.get("subscription_plan") or "free").lower()
+    included_tokens = _token_allowance_for_plan(plan)
+    would_overrun_included = included_tokens is not None and projected_month > included_tokens
+    payg_enabled = bool(controls.get("payg_enabled"))
+
+    wallet_debited = False
+    wallet_charge_cents = int(payload.cost_cents or 0)
+    if would_overrun_included and payload.auto_debit_wallet:
+        if not payg_enabled:
+            raise HTTPException(status_code=402, detail="Included tokens exhausted and PAYG is disabled.")
+        wallet_debited = _debit_wallet(
+            owner_id=payload.owner_id,
+            amount_cents=wallet_charge_cents,
+            reason="payg_usage",
+            metadata={
+                "request_id": payload.request_id,
+                "agent_slug": payload.agent_slug,
+                "tokens": max(0, int(total_tokens)),
+            },
+        )
+        if not wallet_debited:
+            raise HTTPException(status_code=402, detail="Insufficient wallet balance for PAYG usage.")
+
     try:
         row = db.insert_one(
             "token_usage_ledger",
@@ -648,11 +746,40 @@ def record_usage(payload: TokenUsageRecordPayload) -> dict[str, Any]:
             },
         )
     except Exception as error:
+        if payload.request_id:
+            try:
+                existing = (
+                    db.client.table("token_usage_ledger")
+                    .select("*")
+                    .eq("request_id", payload.request_id)
+                    .limit(1)
+                    .execute()
+                )
+                rows = existing.data or []
+                if rows:
+                    return {
+                        "success": True,
+                        "record": rows[0],
+                        "limits_checked": True,
+                        "violations": limit_violations,
+                        "payg_applied": False,
+                        "wallet_charge_cents": 0,
+                        "idempotent_replay": True,
+                    }
+            except Exception:
+                pass
         raise HTTPException(
             status_code=503,
             detail=f"Token usage ledger is not ready. Run billing migration patch. ({error})",
         ) from error
-    return {"success": True, "record": row}
+    return {
+        "success": True,
+        "record": row,
+        "limits_checked": True,
+        "violations": limit_violations,
+        "payg_applied": bool(wallet_debited),
+        "wallet_charge_cents": wallet_charge_cents if wallet_debited else 0,
+    }
 
 
 @router.get("/wallet/{owner_id}")
