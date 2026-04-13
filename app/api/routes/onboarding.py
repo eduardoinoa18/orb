@@ -503,33 +503,104 @@ def admin_bootstrap(payload: AdminBootstrapPayload) -> dict[str, Any]:
         raise HTTPException(status_code=500, detail="Failed to hash password.") from exc
 
     owner_id = None
+    last_error: Exception | None = None
     try:
         existing = db.fetch_all("owners", {"email": email})
         if existing:
             owner_id = str(existing[0].get("id") or "")
-            db.update_many("owners", {"id": owner_id}, {
-                "password_hash": password_hash,
-                "role": "master_owner",
-                "billing_exempt": True,
-                "plan": "full_team",
-                "subscription_status": "active",
-            })
+            update_variants = [
+                {
+                    "password_hash": password_hash,
+                    "role": "master_owner",
+                    "billing_exempt": True,
+                    "plan": "full_team",
+                    "subscription_status": "active",
+                },
+                {
+                    "password_hash": password_hash,
+                    "role": "master_owner",
+                    "plan": "full_team",
+                    "subscription_status": "active",
+                },
+                {
+                    "password_hash": password_hash,
+                    "role": "master_owner",
+                    "plan": "full_team",
+                },
+                {
+                    "password_hash": password_hash,
+                    "role": "master_owner",
+                },
+                {
+                    "password_hash": password_hash,
+                },
+            ]
+            updated = False
+            for update_payload in update_variants:
+                try:
+                    db.update_many("owners", {"id": owner_id}, update_payload)
+                    updated = True
+                    break
+                except DatabaseConnectionError as exc:
+                    last_error = exc
+            if not updated:
+                raise last_error or DatabaseConnectionError("Failed to update owner in database.")
         else:
             from uuid import uuid4 as _uuid4
             owner_id = str(_uuid4())
-            db.insert_one("owners", {
-                "id": owner_id,
-                "email": email,
-                "full_name": "Master Owner",
-                "name": "Master Owner",
-                "password_hash": password_hash,
-                "role": "master_owner",
-                "billing_exempt": True,
-                "plan": "full_team",
-                "subscription_status": "active",
-            })
+            insert_variants = [
+                {
+                    "id": owner_id,
+                    "email": email,
+                    "full_name": "Master Owner",
+                    "name": "Master Owner",
+                    "password_hash": password_hash,
+                    "role": "master_owner",
+                    "billing_exempt": True,
+                    "plan": "full_team",
+                    "subscription_status": "active",
+                },
+                {
+                    "id": owner_id,
+                    "email": email,
+                    "name": "Master Owner",
+                    "password_hash": password_hash,
+                    "role": "master_owner",
+                    "plan": "full_team",
+                    "subscription_status": "active",
+                },
+                {
+                    "id": owner_id,
+                    "email": email,
+                    "password_hash": password_hash,
+                    "role": "master_owner",
+                    "plan": "full_team",
+                },
+                {
+                    "id": owner_id,
+                    "email": email,
+                    "password_hash": password_hash,
+                    "role": "master_owner",
+                },
+                {
+                    "id": owner_id,
+                    "email": email,
+                    "password_hash": password_hash,
+                },
+            ]
+            inserted = False
+            for insert_payload in insert_variants:
+                try:
+                    db.insert_one("owners", insert_payload)
+                    inserted = True
+                    break
+                except DatabaseConnectionError as exc:
+                    last_error = exc
+            if not inserted:
+                raise last_error or DatabaseConnectionError("Failed to create owner in database.")
     except DatabaseConnectionError as exc:
-        raise HTTPException(status_code=503, detail=ADMIN_BOOTSTRAP_DB_ERROR) from exc
+        reason = str(exc)[:180]
+        raise HTTPException(status_code=503, detail=f"{ADMIN_BOOTSTRAP_DB_ERROR} Reason: {reason}") from exc
 
     token = _make_jwt(owner_id, email, role="master_owner")
     return {
