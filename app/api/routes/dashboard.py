@@ -16,8 +16,23 @@ from integrations.brain_connector import TASK_BRAIN_MAPPING
 from integrations.claude_client import ping_claude
 from integrations.openai_client import ask_gpt_mini
 from integrations.twilio_client import get_messages
+from agents.aria.aria_brain import AriaBrain
+from agents.atlas.atlas_brain import AtlasBrain
+from agents.nova.nova_brain import NovaBrain
+from agents.orion.orion_brain import OrionBrain
+from agents.rex.rex_brain import RexBrain
+from agents.sage.sage_brain import SageBrain
 
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
+
+_AGENT_BRAINS = {
+    "aria": AriaBrain,
+    "atlas": AtlasBrain,
+    "nova": NovaBrain,
+    "orion": OrionBrain,
+    "rex": RexBrain,
+    "sage": SageBrain,
+}
 
 
 class RejectPayload(BaseModel):
@@ -81,6 +96,13 @@ def _safe_fetch(db: SupabaseService, table: str) -> list[dict[str, Any]]:
         return db.fetch_all(table)
     except DatabaseConnectionError:
         return []
+
+
+def _agent_brain(agent_slug: str):
+    brain_cls = _AGENT_BRAINS.get((agent_slug or "").strip().lower())
+    if not brain_cls:
+        raise HTTPException(status_code=404, detail="Unknown agent for learning history.")
+    return brain_cls()
 
 
 def _parse_row_date(value: Any) -> datetime | None:
@@ -766,6 +788,19 @@ def dashboard_improvement_reject(improvement_id: str, payload: RejectPayload) ->
 def dashboard_notifications() -> dict[str, Any]:
     """Returns the current dashboard notification drawer payload."""
     return _build_notifications()
+
+
+@router.get("/agent-learning/{agent_slug}/{owner_id}")
+def dashboard_agent_learning(agent_slug: str, owner_id: str, limit: int = 20) -> dict[str, Any]:
+    """Returns persisted learning snapshots for an agent/owner pair."""
+    brain = _agent_brain(agent_slug)
+    rows = brain.get_learning_history(agent_id=owner_id, limit=max(1, min(limit, 100)))
+    return {
+        "agent_slug": agent_slug,
+        "owner_id": owner_id,
+        "entries": rows,
+        "count": len(rows),
+    }
 
 
 @router.post("/integrations/live-check")

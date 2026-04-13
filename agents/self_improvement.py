@@ -38,6 +38,20 @@ class AgentSelfImprovement:
         analysis = self._analyze_with_ai(agent_id=agent_id, rows=rows)
         self._apply_behavior_changes(analysis)
         self._log_summary(agent_id=agent_id, analysis=analysis)
+        self._persist_learning_snapshot(
+            agent_id=agent_id,
+            snapshot_type="self_review",
+            payload={
+                "lookback_days": lookback_days,
+                "events_analyzed": len(rows),
+                "what_worked": analysis.what_worked,
+                "what_failed": analysis.what_failed,
+                "token_waste_identified": analysis.token_waste_identified,
+                "owner_preferences_learned": analysis.owner_preferences_learned,
+                "behavior_changes": analysis.behavior_changes,
+                "new_skills_to_develop": analysis.new_skills_to_develop,
+            },
+        )
 
         return {
             "agent_id": agent_id,
@@ -66,6 +80,7 @@ class AgentSelfImprovement:
             "updated_at": datetime.now(timezone.utc).isoformat(),
         }
         self._merge_config_values({"owner_style": style_hint})
+        self._persist_learning_snapshot(agent_id=agent_id, snapshot_type="owner_style", payload=style_hint)
         return {"agent_id": agent_id, "owner_style": style_hint}
 
     def identify_owner_needs(self, agent_id: str, observation_period_days: int = 30) -> dict[str, Any]:
@@ -84,7 +99,36 @@ class AgentSelfImprovement:
         if not suggestions:
             suggestions.append("I can create a weekly ops summary so you only review high-impact decisions.")
 
-        return {"agent_id": agent_id, "suggestions": suggestions[:3], "observation_period_days": observation_period_days}
+        result = {"agent_id": agent_id, "suggestions": suggestions[:3], "observation_period_days": observation_period_days}
+        self._persist_learning_snapshot(
+            agent_id=agent_id,
+            snapshot_type="owner_needs",
+            payload=result,
+        )
+        return result
+
+    def record_learning_note(
+        self,
+        agent_id: str,
+        category: str,
+        title: str,
+        content: str,
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Allows agents to persist skills, facts, and important observations as files."""
+        normalized_category = (category or "general").strip().lower().replace(" ", "_")
+        payload = {
+            "title": title.strip() or "Untitled note",
+            "content": content.strip(),
+            "metadata": metadata or {},
+        }
+        if not payload["content"]:
+            raise ValueError("Learning note content cannot be empty.")
+        return self._persist_learning_snapshot(
+            agent_id=agent_id,
+            snapshot_type=normalized_category,
+            payload=payload,
+        )
 
     def _load_recent_activity(self, agent_id: str, lookback_days: int) -> list[dict[str, Any]]:
         cutoff = datetime.now(timezone.utc) - timedelta(days=lookback_days)
@@ -178,6 +222,60 @@ class AgentSelfImprovement:
 
         existing.update(values)
         config_path.write_text(json.dumps(existing, indent=2), encoding="utf-8")
+
+    def _persist_learning_snapshot(
+        self,
+        agent_id: str,
+        snapshot_type: str,
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        directory = self._learning_directory(agent_id=agent_id)
+        directory.mkdir(parents=True, exist_ok=True)
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        safe_type = (snapshot_type or "note").strip().lower().replace(" ", "_")
+        filename = f"{timestamp}_{safe_type}.json"
+        file_path = directory / filename
+        record = {
+            "agent_slug": self.agent_slug,
+            "agent_id": agent_id,
+            "snapshot_type": safe_type,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "payload": payload,
+        }
+        file_path.write_text(json.dumps(record, indent=2), encoding="utf-8")
+        self._write_learning_index(directory=directory)
+        return {"file_path": str(file_path), "snapshot_type": safe_type, "created_at": record["created_at"]}
+
+    def get_learning_history(self, agent_id: str, limit: int = 20) -> list[dict[str, Any]]:
+        directory = self._learning_directory(agent_id=agent_id)
+        if not directory.exists():
+            return []
+        records: list[dict[str, Any]] = []
+        for path in sorted(directory.glob("*.json"), reverse=True):
+            if path.name == "index.json":
+                continue
+            try:
+                records.append(json.loads(path.read_text(encoding="utf-8")))
+            except json.JSONDecodeError:
+                continue
+            if len(records) >= limit:
+                break
+        return records
+
+    def _write_learning_index(self, directory: Path) -> None:
+        index_path = directory / "index.json"
+        rows = []
+        for path in sorted(directory.glob("*.json"), reverse=True):
+            if path.name == "index.json":
+                continue
+            rows.append({"file_name": path.name, "updated_at": datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc).isoformat()})
+        index_path.write_text(json.dumps({"entries": rows[:100]}, indent=2), encoding="utf-8")
+
+    def _learning_directory(self, agent_id: str) -> Path:
+        base = Path(__file__).resolve().parent.parent
+        safe_agent_id = (agent_id or "unknown").strip().replace("/", "_").replace("\\", "_")
+        safe_slug = (self.agent_slug or "agent").strip().replace("/", "_").replace("\\", "_")
+        return base / "storage" / "agent_learning" / safe_slug / safe_agent_id
 
     def _config_path(self) -> Path | None:
         base = Path(__file__).resolve().parent.parent
