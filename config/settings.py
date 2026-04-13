@@ -118,6 +118,7 @@ class Settings(BaseSettings):
     hubspot_api_key: str = ""
     followupboss_api_key: str = ""
     elevenlabs_api_key: str = ""
+    canva_api_key: str = ""
 
     # ── Payments (optional) ───────────────────────────────────────────────────
     stripe_secret_key: str = ""

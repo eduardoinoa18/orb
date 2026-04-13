@@ -46,6 +46,18 @@ class TestResult(BaseModel):
     message: str
 
 
+class CanvaDesignRequest(BaseModel):
+    title: str
+    prompt: str
+    design_type: str = "presentation"
+
+
+class ImageGenerateRequest(BaseModel):
+    prompt: str
+    size: str = "1024x1024"
+    quality: str = "standard"
+
+
 class ProviderInfo(BaseModel):
     """Information about an integration provider."""
     slug: str
@@ -374,6 +386,10 @@ def test_integration(provider_slug: str, request: Request) -> TestResult:
             success, message = _test_stripe(credentials.get("secret_key", ""))
         elif provider_slug in {"followupboss", "follow-up-boss", "follow_up_boss"}:
             success, message = _test_followupboss(credentials.get("api_key", ""))
+        elif provider_slug == "canva":
+            from integrations.canva_client import test_canva_connection
+
+            success, message = test_canva_connection(credentials.get("api_key", ""))
         else:
             # Generic test: just check that required fields exist
             provider_info = db.fetch_all("integration_providers", {"slug": provider_slug})
@@ -622,6 +638,22 @@ def integration_env_status() -> dict[str, Any]:
             "docs": "https://elevenlabs.io/api",
             "free": True,
         },
+        "canva": {
+            "name": "Canva",
+            "configured": settings.is_configured("canva_api_key"),
+            "category": "Design",
+            "env_vars": ["CANVA_API_KEY"],
+            "docs": "https://www.canva.dev/docs/connect/",
+            "free": True,
+        },
+        "followupboss": {
+            "name": "Follow Up Boss CRM",
+            "configured": settings.is_configured("followupboss_api_key"),
+            "category": "CRM",
+            "env_vars": ["FOLLOWUPBOSS_API_KEY"],
+            "docs": "https://docs.followupboss.com",
+            "free": False,
+        },
     }
 
     configured_count = sum(1 for s in services.values() if s["configured"])
@@ -629,6 +661,73 @@ def integration_env_status() -> dict[str, Any]:
         "services": services,
         "configured_count": configured_count,
         "total_count": len(services),
+    }
+
+
+@router.post("/canva/generate-design")
+def generate_canva_design(payload: CanvaDesignRequest, request: Request) -> dict[str, Any]:
+    """Generate a Canva-ready design brief and launch URL."""
+    owner_id = _get_owner_id(request)
+
+    from integrations.canva_client import build_canva_create_url
+
+    launch_url = build_canva_create_url(
+        design_type=payload.design_type,
+        title=payload.title,
+        prompt=payload.prompt,
+    )
+
+    try:
+        db = _get_db()
+        db.log_activity(
+            agent_id=None,
+            owner_id=owner_id,
+            action_type="canva_design_brief",
+            description=f"Generated Canva brief: {payload.title}",
+            metadata={
+                "design_type": payload.design_type,
+                "title": payload.title,
+            },
+        )
+    except Exception:
+        # Non-fatal logging failure should not block operator output.
+        pass
+
+    return {
+        "success": True,
+        "title": payload.title,
+        "design_type": payload.design_type,
+        "brief": payload.prompt,
+        "launch_url": launch_url,
+    }
+
+
+@router.post("/image/generate")
+def generate_marketing_image(payload: ImageGenerateRequest, request: Request) -> dict[str, Any]:
+    """Generate an image for marketing, social, or design workflows."""
+    owner_id = _get_owner_id(request)
+
+    from integrations.openai_client import generate_image
+
+    image = generate_image(prompt=payload.prompt, size=payload.size, quality=payload.quality)
+
+    try:
+        db = _get_db()
+        db.log_activity(
+            agent_id=None,
+            owner_id=owner_id,
+            action_type="image_generate",
+            description="Generated marketing image",
+            metadata={"size": payload.size, "quality": payload.quality},
+        )
+    except Exception:
+        pass
+
+    return {
+        "success": True,
+        "image_url": image.get("url"),
+        "prompt_used": image.get("prompt_used"),
+        "size": image.get("size", payload.size),
     }
 
 
@@ -749,6 +848,25 @@ def list_available_tools() -> dict[str, Any]:
          "available": s.is_configured("github_token"), "requires": "GITHUB_TOKEN"},
         {"tool": "github_commits", "name": "Get Recent Commits", "category": "Dev",
          "available": s.is_configured("github_token"), "requires": "GITHUB_TOKEN"},
+        # Follow Up Boss CRM
+        {"tool": "fub_search", "name": "Search FUB Contacts", "category": "CRM",
+         "available": s.is_configured("followupboss_api_key"), "requires": "FOLLOWUPBOSS_API_KEY"},
+        {"tool": "fub_contact", "name": "Create FUB Lead", "category": "CRM",
+         "available": s.is_configured("followupboss_api_key"), "requires": "FOLLOWUPBOSS_API_KEY"},
+        {"tool": "fub_note", "name": "Add FUB Note", "category": "CRM",
+         "available": s.is_configured("followupboss_api_key"), "requires": "FOLLOWUPBOSS_API_KEY"},
+        {"tool": "fub_deal", "name": "Create FUB Deal", "category": "CRM",
+         "available": s.is_configured("followupboss_api_key"), "requires": "FOLLOWUPBOSS_API_KEY"},
+        {"tool": "fub_task", "name": "Create FUB Task", "category": "CRM",
+         "available": s.is_configured("followupboss_api_key"), "requires": "FOLLOWUPBOSS_API_KEY"},
+        {"tool": "fub_stage", "name": "Change FUB Stage", "category": "CRM",
+         "available": s.is_configured("followupboss_api_key"), "requires": "FOLLOWUPBOSS_API_KEY"},
+        {"tool": "fub_call", "name": "Log FUB Call", "category": "CRM",
+         "available": s.is_configured("followupboss_api_key"), "requires": "FOLLOWUPBOSS_API_KEY"},
+        {"tool": "fub_smart_lists", "name": "Get FUB Smart Lists", "category": "CRM",
+         "available": s.is_configured("followupboss_api_key"), "requires": "FOLLOWUPBOSS_API_KEY"},
+        {"tool": "fub_tasks_pending", "name": "Get FUB Pending Tasks", "category": "CRM",
+         "available": s.is_configured("followupboss_api_key"), "requires": "FOLLOWUPBOSS_API_KEY"},
         # Voice
         {"tool": "voice_speak", "name": "Text to Speech", "category": "AI",
          "available": s.is_configured("elevenlabs_api_key"), "requires": "ELEVENLABS_API_KEY"},
@@ -803,49 +921,4 @@ def _test_twilio(credentials: dict[str, str]) -> tuple[bool, str]:
         import twilio
         from twilio.rest import Client
         client = Client(account_sid, auth_token)
-        account = client.api.accounts(account_sid).fetch()
-        return bool(account), f"Connected to Twilio account {account_sid[:8]}..."
-    except Exception as error:
-        return False, f"Twilio error: {str(error)[:100]}"
-
-
-def _test_openai(api_key: str) -> tuple[bool, str]:
-    """Test OpenAI API connectivity."""
-    if not api_key or not api_key.startswith("sk-"):
-        return False, "Invalid or missing OpenAI API key"
-
-    try:
-        from integrations.openai_client import ask_gpt_mini
-        response = ask_gpt_mini(
-            system="You are a health check service.",
-            prompt="Respond with 'healthy' and nothing else.",
-        )
-        return bool(response), "Connected to OpenAI API" if response else "No response from API"
-    except Exception as error:
-        return False, f"OpenAI API error: {str(error)[:100]}"
-
-
-def _test_stripe(secret_key: str) -> tuple[bool, str]:
-    """Test Stripe API connectivity."""
-    if not secret_key or not secret_key.startswith("sk_"):
-        return False, "Invalid or missing Stripe secret key"
-
-    try:
-        import stripe
-        stripe.api_key = secret_key
-        stripe.Account.retrieve()
-        return True, "Connected to Stripe API"
-    except Exception as error:
-        return False, f"Stripe error: {str(error)[:100]}"
-
-
-def _test_followupboss(api_key: str) -> tuple[bool, str]:
-    """Test Follow Up Boss API connectivity."""
-    if not api_key:
-        return False, "Missing Follow Up Boss API key"
-
-    try:
-        from integrations.followupboss_client import test_connection
-        return test_connection(api_key)
-    except Exception as error:
-        return False, f"Follow Up Boss error: {str(error)[:100]}"
+        account = client.
