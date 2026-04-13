@@ -39,6 +39,7 @@ from app.api.routes import (
     content,
     dashboard_config,
     dashboard,
+    integration_management,
     onboarding,
     optimization,
     orion,
@@ -575,6 +576,7 @@ app.include_router(atlas.router)
 app.include_router(billing.router)
 app.include_router(commander.router)
 app.include_router(commander_settings.router)
+app.include_router(integration_management.router)
 app.include_router(integrations.router)
 app.include_router(onboarding.router)
 app.include_router(content.router)

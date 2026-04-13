@@ -366,3 +366,124 @@ CREATE INDEX IF NOT EXISTS idx_collaboration_owner_agent
   ON public.agent_collaboration_events(owner_id, initiating_agent_slug);
 CREATE INDEX IF NOT EXISTS idx_collaboration_success_tracking
   ON public.agent_collaboration_events(owner_id, success, created_at DESC);
+
+-- 18) Integration request tracking (user requests for new API/product integrations)
+CREATE TABLE IF NOT EXISTS public.integration_requests (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  owner_id text NOT NULL,
+  product_name text NOT NULL,
+  api_documentation_url text,
+  use_case text,
+  priority text DEFAULT 'medium',
+  status text DEFAULT 'pending',
+  requested_by text NOT NULL,
+  approved_by text,
+  assigned_agent_id text,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  approved_at timestamptz,
+  implementation_started_at timestamptz,
+  implementation_completed_at timestamptz
+);
+
+CREATE INDEX IF NOT EXISTS idx_integration_requests_owner_id
+  ON public.integration_requests(owner_id);
+CREATE INDEX IF NOT EXISTS idx_integration_requests_status
+  ON public.integration_requests(status, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_integration_requests_assigned_agent
+  ON public.integration_requests(assigned_agent_id);
+
+-- 19) Agent implementation audit log (tracks all changes made by agents to platform code/config)
+CREATE TABLE IF NOT EXISTS public.agent_implementation_audit (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  integration_request_id uuid REFERENCES public.integration_requests(id) ON DELETE CASCADE,
+  agent_id text NOT NULL,
+  agent_name text NOT NULL,
+  action_type text NOT NULL,
+  resource_type text NOT NULL,
+  resource_path text NOT NULL,
+  change_summary text,
+  change_diff jsonb DEFAULT '{}'::jsonb,
+  status text DEFAULT 'pending_approval',
+  approved_by text,
+  approval_notes text,
+  rollback_available boolean DEFAULT true,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  approved_at timestamptz,
+  executed_at timestamptz
+);
+
+CREATE INDEX IF NOT EXISTS idx_audit_integration_request_id
+  ON public.agent_implementation_audit(integration_request_id);
+CREATE INDEX IF NOT EXISTS idx_audit_agent_id
+  ON public.agent_implementation_audit(agent_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_audit_status
+  ON public.agent_implementation_audit(status, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_audit_resource_path
+  ON public.agent_implementation_audit(resource_path);
+
+-- 20) Integration versions (version control for each implemented integration)
+CREATE TABLE IF NOT EXISTS public.integration_versions (
+  id uuid PRIMARYKey DEFAULT gen_random_uuid(),
+  integration_request_id uuid REFERENCES public.integration_requests(id) ON DELETE CASCADE,
+  version_number integer NOT NULL,
+  implemented_by_agent_id text NOT NULL,
+  implementation_date timestamptz NOT NULL,
+  module_path text NOT NULL,
+  test_results jsonb DEFAULT '{}'::jsonb,
+  test_coverage_percent integer,
+  api_endpoints_added text[] DEFAULT '{}',
+  dependencies_added text[] DEFAULT '{}',
+  breaking_changes text[] DEFAULT '{}',
+  rollback_available boolean DEFAULT true,
+  deployment_status text DEFAULT 'ready',
+  deployed_at timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_integration_versions_request_id
+  ON public.integration_versions(integration_request_id);
+CREATE INDEX IF NOT EXISTS idx_integration_versions_by_agent
+  ON public.integration_versions(implemented_by_agent_id, implementation_date DESC);
+
+-- 21) Agent permissions for admin access (control what admin agents can modify)
+CREATE TABLE IF NOT EXISTS public.agent_permissions (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  agent_id text NOT NULL,
+  agent_name text NOT NULL,
+  permission_scope text NOT NULL,
+  resource_path text,
+  access_level text NOT NULL,
+  approved_by text,
+  expires_at timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE(agent_id, permission_scope, resource_path)
+);
+
+CREATE INDEX IF NOT EXISTS idx_agent_permissions_agent_id
+  ON public.agent_permissions(agent_id, access_level);
+CREATE INDEX IF NOT EXISTS idx_agent_permissions_scope
+  ON public.agent_permissions(permission_scope, access_level);
+
+-- 22) MCP server connection log (tracks agent-Copilot communication sessions)
+CREATE TABLE IF NOT EXISTS public.mcp_agent_sessions (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  agent_id text NOT NULL,
+  agent_name text NOT NULL,
+  session_start_at timestamptz NOT NULL,
+  session_end_at timestamptz,
+  mcp_server_url text,
+  context_resources text[] DEFAULT '{}',
+  queries_issued integer DEFAULT 0,
+  responses_received integer DEFAULT 0,
+  errors_encountered integer DEFAULT 0,
+  last_heartbeat_at timestamptz,
+  status text DEFAULT 'active',
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_mcp_sessions_agent_id
+  ON public.mcp_agent_sessions(agent_id, session_start_at DESC);
+CREATE INDEX IF NOT EXISTS idx_mcp_sessions_status
+  ON public.mcp_agent_sessions(status, session_start_at DESC);
