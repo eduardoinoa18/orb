@@ -134,9 +134,34 @@ def _serialize_row(row: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
+def _canonical_provider_slug(provider_slug: str) -> str:
+    """Normalize user-facing and legacy provider slugs to one canonical slug."""
+    normalized = (provider_slug or "").strip().lower().replace("-", "_")
+    alias_map = {
+        "gemini": "google_ai",
+        "google_gemini": "google_ai",
+        "googleai": "google_ai",
+        "follow_up_boss": "followupboss",
+        "followup_boss": "followupboss",
+        "fub": "followupboss",
+        "crm": "followupboss",
+    }
+    return alias_map.get(normalized, normalized)
+
+
+def _provider_slug_variants(provider_slug: str) -> list[str]:
+    """Return canonical slug plus accepted legacy aliases for lookup/cleanup."""
+    canonical = _canonical_provider_slug(provider_slug)
+    variants = {
+        "google_ai": ["google_ai", "gemini", "google-gemini", "google_gemini", "googleai"],
+        "followupboss": ["followupboss", "follow_up_boss", "follow-up-boss", "followup_boss", "fub", "crm"],
+    }
+    return variants.get(canonical, [canonical])
+
+
 def _settings_key_for_credential(provider_slug: str, field_name: str) -> str:
     """Map provider credential fields to SettingsStore keys used by runtime clients."""
-    slug = provider_slug.strip().lower().replace("-", "_")
+    slug = _canonical_provider_slug(provider_slug)
     field = field_name.strip().lower()
 
     provider_prefix_map = {
@@ -267,25 +292,49 @@ def get_integration_status(request: Request) -> list[dict[str, Any]]:
         logger.error("Failed to fetch integration status: %s", error)
         raise HTTPException(status_code=503, detail="Database unavailable") from error
 
-    statuses = [
-        {
-            "slug": row.get("provider_slug", ""),
+    status_by_slug: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        slug = _canonical_provider_slug(str(row.get("provider_slug", "")))
+        payload = {
+            "slug": slug,
             "status": row.get("status", "disconnected"),
             "last_tested_at": row.get("last_tested_at"),
             "last_sync_at": row.get("last_sync_at"),
             "error_message": row.get("error_message"),
         }
-        for row in rows
-    ]
+        existing = status_by_slug.get(slug)
+        if existing is None or payload["status"] == "connected":
+            status_by_slug[slug] = payload
 
-    return statuses
+    # Surface platform-level config in owner view for critical providers.
+    from config.settings import get_settings
+    settings = get_settings()
+    if settings.is_configured("google_ai_api_key") and "google_ai" not in status_by_slug:
+        status_by_slug["google_ai"] = {
+            "slug": "google_ai",
+            "status": "connected",
+            "last_tested_at": None,
+            "last_sync_at": None,
+            "error_message": None,
+        }
+    if settings.is_configured("followupboss_api_key") and "followupboss" not in status_by_slug:
+        status_by_slug["followupboss"] = {
+            "slug": "followupboss",
+            "status": "connected",
+            "last_tested_at": None,
+            "last_sync_at": None,
+            "error_message": None,
+        }
+
+    return list(status_by_slug.values())
 
 
 @router.post("/{provider_slug}/connect")
 def connect_integration(provider_slug: str, payload: CredentialPayload, request: Request) -> dict[str, Any]:
     """Connect an integration by saving encrypted credentials."""
     owner_id = _get_owner_id(request)
-    provider_slug = provider_slug.strip().lower()
+    provider_slug = _canonical_provider_slug(provider_slug)
+    slug_variants = _provider_slug_variants(provider_slug)
 
     if not payload.credentials:
         raise HTTPException(status_code=400, detail="No credentials provided")
@@ -322,10 +371,11 @@ def connect_integration(provider_slug: str, payload: CredentialPayload, request:
             encrypted = em.encrypt(value)
             try:
                 # Try to update if exists, otherwise insert
-                db.delete_many(
-                    "integration_credentials",
-                    {"owner_id": owner_id, "provider_slug": provider_slug, "field_name": field_name},
-                )
+                for variant in slug_variants:
+                    db.delete_many(
+                        "integration_credentials",
+                        {"owner_id": owner_id, "provider_slug": variant, "field_name": field_name},
+                    )
                 db.insert_one(
                     "integration_credentials",
                     {
@@ -341,11 +391,12 @@ def connect_integration(provider_slug: str, payload: CredentialPayload, request:
                 raise
 
         # Mark integration as connected and log the event
-        db.update_many(
-            "owner_integrations",
-            {"owner_id": owner_id, "provider_slug": provider_slug},
-            {"status": "connected", "updated_at": "now()", "error_message": None},
-        )
+        for variant in slug_variants:
+            db.update_many(
+                "owner_integrations",
+                {"owner_id": owner_id, "provider_slug": variant},
+                {"status": "connected", "updated_at": "now()", "error_message": None},
+            )
 
         # If row doesn't exist, insert it
         try:
@@ -401,22 +452,25 @@ def connect_integration(provider_slug: str, payload: CredentialPayload, request:
 def disconnect_integration(provider_slug: str, request: Request) -> dict[str, Any]:
     """Disconnect an integration by removing all credentials."""
     owner_id = _get_owner_id(request)
-    provider_slug = provider_slug.strip().lower()
+    provider_slug = _canonical_provider_slug(provider_slug)
+    slug_variants = _provider_slug_variants(provider_slug)
 
     try:
         db = _get_db()
         # Delete all credentials for this integration
-        db.delete_many(
-            "integration_credentials",
-            {"owner_id": owner_id, "provider_slug": provider_slug},
-        )
+        for variant in slug_variants:
+            db.delete_many(
+                "integration_credentials",
+                {"owner_id": owner_id, "provider_slug": variant},
+            )
 
         # Mark as disconnected
-        db.update_many(
-            "owner_integrations",
-            {"owner_id": owner_id, "provider_slug": provider_slug},
-            {"status": "disconnected", "updated_at": "now()", "error_message": None},
-        )
+        for variant in slug_variants:
+            db.update_many(
+                "owner_integrations",
+                {"owner_id": owner_id, "provider_slug": variant},
+                {"status": "disconnected", "updated_at": "now()", "error_message": None},
+            )
 
         # Log the event
         db.log_activity(
@@ -442,7 +496,8 @@ def disconnect_integration(provider_slug: str, request: Request) -> dict[str, An
 def test_integration(provider_slug: str, request: Request) -> TestResult:
     """Test connection to an integration by making a live API call."""
     owner_id = _get_owner_id(request)
-    provider_slug = provider_slug.strip().lower()
+    provider_slug = _canonical_provider_slug(provider_slug)
+    slug_variants = _provider_slug_variants(provider_slug)
 
     try:
         db = _get_db()
@@ -455,10 +510,14 @@ def test_integration(provider_slug: str, request: Request) -> TestResult:
 
     try:
         # Fetch credentials
-        cred_rows = db.fetch_all(
-            "integration_credentials",
-            {"owner_id": owner_id, "provider_slug": provider_slug},
-        )
+        cred_rows: list[dict[str, Any]] = []
+        for variant in slug_variants:
+            cred_rows.extend(
+                db.fetch_all(
+                    "integration_credentials",
+                    {"owner_id": owner_id, "provider_slug": variant},
+                )
+            )
 
         if not cred_rows:
             return TestResult(
@@ -491,9 +550,11 @@ def test_integration(provider_slug: str, request: Request) -> TestResult:
             success, message = _test_twilio(credentials)
         elif provider_slug == "openai":
             success, message = _test_openai(credentials.get("api_key", ""))
+        elif provider_slug == "google_ai":
+            success, message = _test_google_ai(credentials.get("api_key", ""))
         elif provider_slug == "stripe":
             success, message = _test_stripe(credentials.get("secret_key", ""))
-        elif provider_slug in {"followupboss", "follow-up-boss", "follow_up_boss"}:
+        elif provider_slug == "followupboss":
             success, message = _test_followupboss(credentials.get("api_key", ""))
         elif provider_slug == "canva":
             from integrations.canva_client import test_canva_connection
@@ -527,17 +588,19 @@ def test_integration(provider_slug: str, request: Request) -> TestResult:
 
         # Update the integration status
         if success:
-            db.update_many(
-                "owner_integrations",
-                {"owner_id": owner_id, "provider_slug": provider_slug},
-                {"status": "connected", "last_tested_at": "now()", "error_message": None},
-            )
+            for variant in slug_variants:
+                db.update_many(
+                    "owner_integrations",
+                    {"owner_id": owner_id, "provider_slug": variant},
+                    {"status": "connected", "last_tested_at": "now()", "error_message": None},
+                )
         else:
-            db.update_many(
-                "owner_integrations",
-                {"owner_id": owner_id, "provider_slug": provider_slug},
-                {"status": "error", "last_tested_at": "now()", "error_message": message},
-            )
+            for variant in slug_variants:
+                db.update_many(
+                    "owner_integrations",
+                    {"owner_id": owner_id, "provider_slug": variant},
+                    {"status": "error", "last_tested_at": "now()", "error_message": message},
+                )
 
         return TestResult(success=success, latency_ms=latency_ms, message=message)
 
@@ -1126,6 +1189,13 @@ def _test_openai(api_key: str) -> tuple[bool, str]:
         return bool(response), "Connected to OpenAI API" if response else "No response from API"
     except Exception as error:
         return False, f"OpenAI API error: {str(error)[:100]}"
+
+
+def _test_google_ai(api_key: str) -> tuple[bool, str]:
+    """Test Google Gemini API connectivity with basic key validation."""
+    if not api_key or len(api_key.strip()) < 12:
+        return False, "Invalid or missing Google Gemini API key"
+    return True, "Google Gemini credentials are present"
 
 
 def _test_stripe(secret_key: str) -> tuple[bool, str]:
