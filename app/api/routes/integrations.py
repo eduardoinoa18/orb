@@ -14,6 +14,7 @@ from fastapi import APIRouter, HTTPException, Request, status
 from pydantic import BaseModel, Field
 
 from app.database.connection import DatabaseConnectionError, SupabaseService
+from app.database.settings_store import SettingsStore
 from integrations.encryption import EncryptionError, get_encryption_manager
 
 logger = logging.getLogger("orb.integrations")
@@ -133,6 +134,66 @@ def _serialize_row(row: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
+def _settings_key_for_credential(provider_slug: str, field_name: str) -> str:
+    """Map provider credential fields to SettingsStore keys used by runtime clients."""
+    slug = provider_slug.strip().lower().replace("-", "_")
+    field = field_name.strip().lower()
+
+    provider_prefix_map = {
+        "followupboss": "followupboss",
+        "follow_up_boss": "followupboss",
+        "facebook_messenger": "facebook",
+        "google_calendar": "google",
+    }
+    base = provider_prefix_map.get(slug, slug)
+
+    field_aliases = {
+        "api_key": "api_key",
+        "access_token": "access_token",
+        "webhook_url": "webhook_url",
+        "bot_token": "bot_token",
+        "page_token": "page_token",
+        "account_sid": "account_sid",
+        "auth_token": "auth_token",
+        "from_number": "from_number",
+        "organization_id": "organization_id",
+        "base_id": "base_id",
+        "refresh_token": "refresh_token",
+        "client_id": "client_id",
+        "client_secret": "client_secret",
+        "list_id": "list_id",
+        "server": "server",
+        "account_id": "account_id",
+        "store_domain": "store_domain",
+        "app_secret": "app_secret",
+    }
+    normalized_field = field_aliases.get(field, field)
+    return f"{base}_{normalized_field}"
+
+
+def _fallback_save_credentials_to_settings(
+    owner_id: str,
+    provider_slug: str,
+    credentials: dict[str, str],
+) -> int:
+    """Persist credentials to encrypted settings store as a degraded-mode fallback."""
+    store = SettingsStore()
+    saved = 0
+    for field_name, value in credentials.items():
+        if not value:
+            continue
+        key_name = _settings_key_for_credential(provider_slug, field_name)
+        store.save(
+            key=key_name,
+            value=value,
+            description=f"Fallback integration credential for {provider_slug}:{field_name}",
+            category="integration",
+            owner_id=owner_id,
+        )
+        saved += 1
+    return saved
+
+
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
@@ -212,8 +273,19 @@ def connect_integration(provider_slug: str, payload: CredentialPayload, request:
         logger.error("Encryption manager unavailable: %s", error)
         raise HTTPException(status_code=500, detail="Encryption unavailable") from error
     except DatabaseConnectionError as error:
-        logger.error("Database unavailable: %s", error)
-        raise HTTPException(status_code=503, detail="Database unavailable") from error
+        logger.warning("Primary integration DB path unavailable, attempting settings-store fallback: %s", error)
+        try:
+            stored_count = _fallback_save_credentials_to_settings(owner_id, provider_slug, payload.credentials)
+            return {
+                "success": True,
+                "provider_slug": provider_slug,
+                "credentials_stored": stored_count,
+                "fallback": "settings_store",
+                "message": f"Connected {provider_slug} using fallback settings store",
+            }
+        except Exception as fallback_error:
+            logger.error("Fallback settings-store connect failed: %s", fallback_error)
+            raise HTTPException(status_code=503, detail="Database unavailable") from error
 
     # Store each credential encrypted
     stored_count = 0
@@ -284,8 +356,19 @@ def connect_integration(provider_slug: str, payload: CredentialPayload, request:
         logger.error("Encryption failed: %s", error)
         raise HTTPException(status_code=500, detail="Encryption failed") from error
     except DatabaseConnectionError as error:
-        logger.error("Failed to connect integration: %s", error)
-        raise HTTPException(status_code=503, detail="Database error") from error
+        logger.warning("Table-based credential write failed, attempting settings-store fallback: %s", error)
+        try:
+            stored_count = _fallback_save_credentials_to_settings(owner_id, provider_slug, payload.credentials)
+            return {
+                "success": True,
+                "provider_slug": provider_slug,
+                "credentials_stored": stored_count,
+                "fallback": "settings_store",
+                "message": f"Connected {provider_slug} using fallback settings store",
+            }
+        except Exception as fallback_error:
+            logger.error("Fallback settings-store connect failed: %s", fallback_error)
+            raise HTTPException(status_code=503, detail="Database error") from error
 
 
 @router.delete("/{provider_slug}/disconnect")
