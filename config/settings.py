@@ -143,6 +143,13 @@ class Settings(BaseSettings):
     marketaux_api_key: str = ""
     tradingview_webhook_secret: str = ""
 
+    # ── Messaging Integrations (optional) ──────────────────────────────────────
+    slack_bot_token: str = ""
+    slack_signing_secret: str = ""
+    discord_bot_token: str = ""
+    discord_public_key: str = ""
+    telegram_bot_token: str = ""
+
     # ── Security extras (auto-generated if blank) ─────────────────────────────
     encryption_secret: str = ""
     mfa_secret_key: str = ""

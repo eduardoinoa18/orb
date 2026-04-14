@@ -643,3 +643,93 @@ async def stripe_webhook(request: Request, stripe_signature: str | None = Header
         pass
 
     return {"received": True, "event_type": event.get("type"), "handler_result": result}
+
+
+@router.post("/slack/interactive")
+async def slack_interactive_webhook(
+    request: Request,
+    x_slack_request_timestamp: str | None = Header(default=None),
+    x_slack_request_signature: str | None = Header(default=None),
+) -> dict[str, object]:
+    """Handles Slack interactive events (messages, app mentions, etc.)"""
+    from integrations.slack_client import validate_slack_signature, handle_incoming_slack_message
+    
+    body = (await request.body()).decode("utf-8")
+    
+    if not validate_slack_signature(body, x_slack_request_timestamp or "", x_slack_request_signature or ""):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid Slack signature")
+    
+    payload = await request.json()
+    
+    # Slack URL verification
+    if payload.get("type") == "url_verification":
+        return {"challenge": payload.get("challenge")}
+    
+    # Handle message events
+    if payload.get("type") == "event_callback":
+        event = payload.get("event", {})
+        if event.get("type") == "app_mention" or event.get("type") == "message":
+            user_id = event.get("user", "")
+            channel_id = event.get("channel", "")
+            text = event.get("text", "")
+            
+            result = handle_incoming_slack_message(user_id=user_id, channel_id=channel_id, text=text)
+            return {"received": True, "result": result}
+    
+    return {"received": True}
+
+
+@router.post("/discord/interactions")
+async def discord_interactions_webhook(request: Request) -> dict[str, object]:
+    """Handles Discord interactions (messages, commands, etc.)"""
+    from integrations.discord_client import validate_discord_signature, handle_incoming_discord_message
+    
+    body = (await request.body()).decode("utf-8")
+    headers = request.headers
+    timestamp = headers.get("x-signature-timestamp", "")
+    signature = headers.get("x-signature-ed25519", "")
+    
+    if not validate_discord_signature(timestamp, body, signature):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid Discord signature")
+    
+    payload = await request.json()
+    
+    # Discord ping
+    if payload.get("type") == 1:
+        return {"type": 1}
+    
+    # Handle message create
+    if payload.get("type") == 0:
+        data = payload.get("data", {})
+        user_id = data.get("author", {}).get("id", "")
+        channel_id = data.get("channel_id", "")
+        text = data.get("content", "")
+        
+        result = handle_incoming_discord_message(user_id=user_id, channel_id=channel_id, text=text)
+        return {"received": True, "result": result}
+    
+    return {"received": True}
+
+
+@router.post("/telegram/updates")
+async def telegram_updates_webhook(request: Request) -> dict[str, object]:
+    """Handles Telegram bot updates via webhook."""
+    from integrations.telegram_client import validate_telegram_webhook, handle_incoming_telegram_message
+    
+    payload = await request.json()
+    settings = get_settings()
+    bot_token = settings.resolve("telegram_bot_token", default="").strip()
+    
+    if not bot_token or not validate_telegram_webhook(payload, bot_token):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid Telegram data")
+    
+    message = payload.get("message", {})
+    if message:
+        chat_id = message.get("chat", {}).get("id", "")
+        user_id = message.get("from", {}).get("id", "")
+        text = message.get("text", "")
+        
+        result = handle_incoming_telegram_message(chat_id=chat_id, user_id=user_id, text=text)
+        return {"received": True, "result": result}
+    
+    return {"received": True}
