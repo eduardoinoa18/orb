@@ -194,6 +194,30 @@ def _fallback_save_credentials_to_settings(
     return saved
 
 
+def _mark_owner_integration_connected(owner_id: str, provider_slug: str) -> None:
+    """Best-effort status update so fallback connections appear as connected in UI."""
+    try:
+        db = _get_db()
+        db.update_many(
+            "owner_integrations",
+            {"owner_id": owner_id, "provider_slug": provider_slug},
+            {"status": "connected", "updated_at": "now()", "error_message": None},
+        )
+        try:
+            db.insert_one(
+                "owner_integrations",
+                {
+                    "owner_id": owner_id,
+                    "provider_slug": provider_slug,
+                    "status": "connected",
+                },
+            )
+        except DatabaseConnectionError:
+            pass
+    except Exception as status_error:
+        logger.warning("Unable to update owner_integrations status for %s fallback: %s", provider_slug, status_error)
+
+
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
@@ -276,6 +300,7 @@ def connect_integration(provider_slug: str, payload: CredentialPayload, request:
         logger.warning("Primary integration DB path unavailable, attempting settings-store fallback: %s", error)
         try:
             stored_count = _fallback_save_credentials_to_settings(owner_id, provider_slug, payload.credentials)
+            _mark_owner_integration_connected(owner_id, provider_slug)
             return {
                 "success": True,
                 "provider_slug": provider_slug,
@@ -359,6 +384,7 @@ def connect_integration(provider_slug: str, payload: CredentialPayload, request:
         logger.warning("Table-based credential write failed, attempting settings-store fallback: %s", error)
         try:
             stored_count = _fallback_save_credentials_to_settings(owner_id, provider_slug, payload.credentials)
+            _mark_owner_integration_connected(owner_id, provider_slug)
             return {
                 "success": True,
                 "provider_slug": provider_slug,
