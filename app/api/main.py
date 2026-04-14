@@ -33,6 +33,7 @@ from app.api.routes import (
     aria,
     auth_google,
     billing,
+    channel_mappings,
     commander,
     commander_settings,
     computer_use,
@@ -569,6 +570,7 @@ async def health_check(deep: bool = False) -> dict[str, object]:
 app.include_router(agent_identity.router)
 app.include_router(agents.router)
 app.include_router(access.router)
+app.include_router(channel_mappings.router)
 app.include_router(agent_settings.router)
 app.include_router(aria.router)
 app.include_router(auth_google.router)
