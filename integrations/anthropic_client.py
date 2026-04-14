@@ -83,6 +83,7 @@ def ask_claude(
     task_type: str | None = None,
     max_budget_cents: int = 5,
     agent_id: str | None = None,
+    owner_id: str | None = None,
     is_critical: bool = False,
 ) -> dict[str, Any]:
     """
@@ -194,6 +195,7 @@ def ask_claude(
             description=f"Anthropic call using {resolved_model}",
             outcome="success",
             cost_cents=cost_cents,
+            owner_id=owner_id,
         )
 
         return {
@@ -217,6 +219,7 @@ def ask_claude(
             description=f"Anthropic call using {resolved_model}",
             outcome=f"error: {error}",
             cost_cents=0,
+            owner_id=owner_id,
         )
         raise
 

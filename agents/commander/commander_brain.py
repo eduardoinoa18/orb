@@ -607,6 +607,24 @@ class CommanderBrain:
             "You can learn and remember things the owner teaches you. If they say 'remember' or 'learn' something,"
             " acknowledge it and confirm you will apply it going forward.\n"
             "You continuously self-improve based on feedback. Apply the lessons below.\n"
+            "\n"
+            "DASHBOARD CUSTOMIZATION: You can reshape the owner's dashboard in real time via conversation.\n"
+            "Use these tools when the owner asks to change their dashboard layout or appearance:\n"
+            "  • dashboard_list           → show current tabs and widgets\n"
+            "  • dashboard_add_tab        → add a new tab (params: label, icon)\n"
+            "  • dashboard_remove_tab     → remove a tab by id (protected: overview, commander)\n"
+            "  • dashboard_add_widget     → add a widget to a tab (params: tab_id, widget_type, title, size)\n"
+            "    Widget types: stat, activity, chat, agents, calendar, crm, chart, list, custom\n"
+            "    Sizes: sm, md, lg, full\n"
+            "  • dashboard_remove_widget  → remove a widget (params: tab_id, widget_id)\n"
+            "  • dashboard_change_theme   → change visual style (params: accent_color, card_style,\n"
+            "    density, sidebar_style, font, commander_position)\n"
+            "    Colors: #8B5CF6 purple, #3B82F6 blue, #10B981 green, #F59E0B amber, #EF4444 red\n"
+            "    card_style: bordered | filled | glass\n"
+            "    density: compact | comfortable | spacious\n"
+            "    commander_position: sidebar | tab | floating | hidden\n"
+            "  • dashboard_reorder_tabs   → reorder tabs (param: tab_order as list of tab IDs)\n"
+            "Always confirm changes out loud: 'I've added a CRM tab to your dashboard.'\n"
         )
         if skills_context:
             system_prompt += f"\n{skills_context}\n"
@@ -635,9 +653,17 @@ class CommanderBrain:
                 max_tokens=450,
                 max_budget_cents=budget,
                 agent_id=None,
+                owner_id=owner_id,
                 is_critical=True,
             )
             response_text = str(ai.get("text") or "").strip()
+            ai_usage = {
+                "model": str(ai.get("model") or model),
+                "input_tokens": int(ai.get("input_tokens") or 0),
+                "output_tokens": int(ai.get("output_tokens") or 0),
+                "cost_cents": int(ai.get("cost_cents") or 0),
+            }
+            ai_usage["cost_dollars"] = round(ai_usage["cost_cents"] / 100, 2)
         except Exception:
             response_text = (
                 f"I have this. Based on your request, I activated {', '.join(activated)} and started execution immediately. "
@@ -645,6 +671,13 @@ class CommanderBrain:
                 f"Current signal snapshot: {context_summary}.\n\n"
                 "Immediate actions are queued and I will report back with outcomes plus any approval decisions you need to make."
             )
+            ai_usage = {
+                "model": model,
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "cost_cents": 0,
+                "cost_dollars": 0.0,
+            }
 
         needs_approval = [
             "Any outbound message that affects customer commitments",
@@ -655,6 +688,7 @@ class CommanderBrain:
             "response": response_text,
             "actions_taken": actions_taken,
             "agents_activated": activated,
+            "ai_usage": ai_usage,
             "follow_ups_scheduled": [
                 {
                     "summary": f"{item['agent']} update expected",
