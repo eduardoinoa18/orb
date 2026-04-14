@@ -257,19 +257,24 @@ async def list_platforms(request: Request):
     """
     owner_id = _require_owner(request)
     settings = get_settings()
-    db = SupabaseService()
-    mapping_rows = (
-        db.client.table("channel_mappings")
-        .select("platform,external_id,is_active")
-        .eq("owner_id", owner_id)
-        .eq("is_active", True)
-        .execute()
-    )
-    mapping_by_platform = {
-        row["platform"]: row["external_id"]
-        for row in (mapping_rows.data or [])
-        if row.get("platform") and row.get("external_id")
-    }
+    mapping_by_platform: dict[str, str] = {}
+    try:
+        db = SupabaseService()
+        mapping_rows = (
+            db.client.table("channel_mappings")
+            .select("platform,external_id,is_active")
+            .eq("owner_id", owner_id)
+            .eq("is_active", True)
+            .execute()
+        )
+        mapping_by_platform = {
+            row["platform"]: row["external_id"]
+            for row in (mapping_rows.data or [])
+            if row.get("platform") and row.get("external_id")
+        }
+    except Exception as e:
+        logger.warning("channel_mappings table unavailable for /platforms, falling back to env values only: %s", e)
+
     result = []
     for platform_id, meta in SUPPORTED_PLATFORMS.items():
         env_key = meta["env_key"].lower()
