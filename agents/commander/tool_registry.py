@@ -1,4 +1,4 @@
-"""Tool Registry — Single source of truth for all Commander tools.
+"""Tool Registry - Single source of truth for all Commander tools.
 
 This replaces the hardcoded tools list and makes the system maintainable.
 Each tool is defined once with: name, category, required permission, env vars needed, description.
@@ -14,7 +14,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Optional
-from integrations.permission_guard import Permission
 
 
 @dataclass
@@ -24,14 +23,14 @@ class ToolMetadata:
     name: str
     description: str
     category: str
-    required_permission: Permission
+    required_permission: str
     required_env_vars: list[str]
     admin_only: bool = False
     always_available: bool = False  # e.g., dashboard tools don't need external API
 
 
 # ============================================================================
-# TOOL REGISTRY — All 83+ tools defined once
+# TOOL REGISTRY - All 83+ tools defined once
 # ============================================================================
 
 TOOL_REGISTRY: dict[str, ToolMetadata] = {
@@ -41,7 +40,7 @@ TOOL_REGISTRY: dict[str, ToolMetadata] = {
         name="Send Slack Message",
         description="Send a message to a Slack channel",
         category="Communications",
-        required_permission=Permission.SEND_SLACK,
+        required_permission="SEND_SLACK",
         required_env_vars=["SLACK_BOT_TOKEN"],
     ),
     "slack_alert": ToolMetadata(
@@ -49,7 +48,7 @@ TOOL_REGISTRY: dict[str, ToolMetadata] = {
         name="Send Slack Alert",
         description="Send a formatted alert card to Slack",
         category="Communications",
-        required_permission=Permission.SEND_SLACK,
+        required_permission="SEND_SLACK",
         required_env_vars=["SLACK_BOT_TOKEN"],
     ),
     "slack_list_channels": ToolMetadata(
@@ -57,7 +56,7 @@ TOOL_REGISTRY: dict[str, ToolMetadata] = {
         name="List Slack Channels",
         description="List all available Slack channels",
         category="Communications",
-        required_permission=Permission.SEND_SLACK,
+        required_permission="SEND_SLACK",
         required_env_vars=["SLACK_BOT_TOKEN"],
     ),
 
@@ -67,7 +66,7 @@ TOOL_REGISTRY: dict[str, ToolMetadata] = {
         name="List Calendar Events",
         description="List upcoming calendar events",
         category="Calendar & Scheduling",
-        required_permission=Permission.READ_CALENDAR,
+        required_permission="READ_CALENDAR",
         required_env_vars=["GOOGLE_REFRESH_TOKEN"],
     ),
     "calendar_create": ToolMetadata(
@@ -75,7 +74,7 @@ TOOL_REGISTRY: dict[str, ToolMetadata] = {
         name="Create Calendar Event",
         description="Create a new calendar event",
         category="Calendar & Scheduling",
-        required_permission=Permission.CREATE_CALENDAR_EVENT,
+        required_permission="CREATE_CALENDAR_EVENT",
         required_env_vars=["GOOGLE_REFRESH_TOKEN"],
     ),
     "calendar_cancel": ToolMetadata(
@@ -83,7 +82,7 @@ TOOL_REGISTRY: dict[str, ToolMetadata] = {
         name="Cancel Calendar Event",
         description="Cancel an existing calendar event",
         category="Calendar & Scheduling",
-        required_permission=Permission.CANCEL_CALENDAR_EVENT,
+        required_permission="CANCEL_CALENDAR_EVENT",
         required_env_vars=["GOOGLE_REFRESH_TOKEN"],
     ),
     "calendar_check": ToolMetadata(
@@ -91,7 +90,7 @@ TOOL_REGISTRY: dict[str, ToolMetadata] = {
         name="Check Availability",
         description="Check availability in a time window",
         category="Calendar & Scheduling",
-        required_permission=Permission.READ_CALENDAR,
+        required_permission="READ_CALENDAR",
         required_env_vars=["GOOGLE_REFRESH_TOKEN"],
     ),
 
@@ -101,7 +100,7 @@ TOOL_REGISTRY: dict[str, ToolMetadata] = {
         name="Send Email",
         description="Send an email via Resend",
         category="Communications",
-        required_permission=Permission.SEND_EMAIL,
+        required_permission="SEND_EMAIL",
         required_env_vars=["RESEND_API_KEY"],
     ),
     "sms_send": ToolMetadata(
@@ -109,7 +108,7 @@ TOOL_REGISTRY: dict[str, ToolMetadata] = {
         name="Send SMS",
         description="Send an SMS message via Twilio",
         category="Communications",
-        required_permission=Permission.SEND_SMS,
+        required_permission="SEND_SMS",
         required_env_vars=["TWILIO_ACCOUNT_SID", "TWILIO_AUTH_TOKEN", "TWILIO_FROM_NUMBER"],
     ),
 
@@ -119,7 +118,7 @@ TOOL_REGISTRY: dict[str, ToolMetadata] = {
         name="Create Notion Page",
         description="Create a new page in Notion",
         category="Productivity",
-        required_permission=Permission.WRITE_NOTION,
+        required_permission="WRITE_NOTION",
         required_env_vars=["NOTION_API_KEY"],
     ),
     "notion_log": ToolMetadata(
@@ -127,7 +126,7 @@ TOOL_REGISTRY: dict[str, ToolMetadata] = {
         name="Log to Notion",
         description="Append a log entry to a Notion database",
         category="Productivity",
-        required_permission=Permission.WRITE_NOTION,
+        required_permission="WRITE_NOTION",
         required_env_vars=["NOTION_API_KEY"],
     ),
     "notion_search": ToolMetadata(
@@ -135,7 +134,7 @@ TOOL_REGISTRY: dict[str, ToolMetadata] = {
         name="Search Notion",
         description="Search your Notion workspace",
         category="Productivity",
-        required_permission=Permission.READ_NOTION,
+        required_permission="READ_NOTION",
         required_env_vars=["NOTION_API_KEY"],
     ),
 
@@ -145,7 +144,7 @@ TOOL_REGISTRY: dict[str, ToolMetadata] = {
         name="Create/Find HubSpot Contact",
         description="Create or find a contact in HubSpot",
         category="CRM",
-        required_permission=Permission.WRITE_HUBSPOT,
+        required_permission="WRITE_HUBSPOT",
         required_env_vars=["HUBSPOT_API_KEY"],
     ),
     "hubspot_deal": ToolMetadata(
@@ -153,7 +152,7 @@ TOOL_REGISTRY: dict[str, ToolMetadata] = {
         name="Create HubSpot Deal",
         description="Create a new deal in HubSpot",
         category="CRM",
-        required_permission=Permission.WRITE_HUBSPOT,
+        required_permission="WRITE_HUBSPOT",
         required_env_vars=["HUBSPOT_API_KEY"],
     ),
     "hubspot_note": ToolMetadata(
@@ -161,7 +160,7 @@ TOOL_REGISTRY: dict[str, ToolMetadata] = {
         name="Log HubSpot Note",
         description="Add a note to a HubSpot contact",
         category="CRM",
-        required_permission=Permission.WRITE_HUBSPOT,
+        required_permission="WRITE_HUBSPOT",
         required_env_vars=["HUBSPOT_API_KEY"],
     ),
     "hubspot_search": ToolMetadata(
@@ -169,7 +168,7 @@ TOOL_REGISTRY: dict[str, ToolMetadata] = {
         name="Search HubSpot Contacts",
         description="Search for contacts in HubSpot",
         category="CRM",
-        required_permission=Permission.READ_HUBSPOT,
+        required_permission="READ_HUBSPOT",
         required_env_vars=["HUBSPOT_API_KEY"],
     ),
 
@@ -179,7 +178,7 @@ TOOL_REGISTRY: dict[str, ToolMetadata] = {
         name="Create FUB Contact",
         description="Create a contact in Follow Up Boss",
         category="CRM",
-        required_permission=Permission.WRITE_FUB,
+        required_permission="WRITE_FUB",
         required_env_vars=["FOLLOWUPBOSS_API_KEY"],
     ),
     "fub_search": ToolMetadata(
@@ -187,7 +186,7 @@ TOOL_REGISTRY: dict[str, ToolMetadata] = {
         name="Search FUB Contacts",
         description="Search for contacts in Follow Up Boss",
         category="CRM",
-        required_permission=Permission.READ_FUB,
+        required_permission="READ_FUB",
         required_env_vars=["FOLLOWUPBOSS_API_KEY"],
     ),
     "fub_note": ToolMetadata(
@@ -195,7 +194,7 @@ TOOL_REGISTRY: dict[str, ToolMetadata] = {
         name="Add FUB Note",
         description="Add a note to a FUB contact",
         category="CRM",
-        required_permission=Permission.WRITE_FUB,
+        required_permission="WRITE_FUB",
         required_env_vars=["FOLLOWUPBOSS_API_KEY"],
     ),
     "fub_deal": ToolMetadata(
@@ -203,7 +202,7 @@ TOOL_REGISTRY: dict[str, ToolMetadata] = {
         name="Create FUB Deal",
         description="Create a deal in Follow Up Boss",
         category="CRM",
-        required_permission=Permission.WRITE_FUB,
+        required_permission="WRITE_FUB",
         required_env_vars=["FOLLOWUPBOSS_API_KEY"],
     ),
     "fub_task": ToolMetadata(
@@ -211,7 +210,7 @@ TOOL_REGISTRY: dict[str, ToolMetadata] = {
         name="Create FUB Task",
         description="Create a task in Follow Up Boss",
         category="CRM",
-        required_permission=Permission.WRITE_FUB,
+        required_permission="WRITE_FUB",
         required_env_vars=["FOLLOWUPBOSS_API_KEY"],
     ),
     "fub_stage": ToolMetadata(
@@ -219,7 +218,7 @@ TOOL_REGISTRY: dict[str, ToolMetadata] = {
         name="Change FUB Stage",
         description="Move a deal to a different stage in FUB",
         category="CRM",
-        required_permission=Permission.WRITE_FUB,
+        required_permission="WRITE_FUB",
         required_env_vars=["FOLLOWUPBOSS_API_KEY"],
     ),
     "fub_call": ToolMetadata(
@@ -227,7 +226,7 @@ TOOL_REGISTRY: dict[str, ToolMetadata] = {
         name="Log FUB Call",
         description="Log a call in Follow Up Boss",
         category="CRM",
-        required_permission=Permission.WRITE_FUB,
+        required_permission="WRITE_FUB",
         required_env_vars=["FOLLOWUPBOSS_API_KEY"],
     ),
     "fub_smart_lists": ToolMetadata(
@@ -235,7 +234,7 @@ TOOL_REGISTRY: dict[str, ToolMetadata] = {
         name="Get FUB Smart Lists",
         description="Retrieve FUB smart list filters",
         category="CRM",
-        required_permission=Permission.READ_FUB,
+        required_permission="READ_FUB",
         required_env_vars=["FOLLOWUPBOSS_API_KEY"],
     ),
     "fub_tasks_pending": ToolMetadata(
@@ -243,7 +242,7 @@ TOOL_REGISTRY: dict[str, ToolMetadata] = {
         name="Get FUB Pending Tasks",
         description="Get pending tasks from Follow Up Boss",
         category="CRM",
-        required_permission=Permission.READ_FUB,
+        required_permission="READ_FUB",
         required_env_vars=["FOLLOWUPBOSS_API_KEY"],
     ),
 
@@ -253,7 +252,7 @@ TOOL_REGISTRY: dict[str, ToolMetadata] = {
         name="Create GitHub Issue",
         description="Create a new GitHub issue",
         category="Development",
-        required_permission=Permission.WRITE_GITHUB,
+        required_permission="WRITE_GITHUB",
         required_env_vars=["GITHUB_TOKEN"],
     ),
     "github_comment": ToolMetadata(
@@ -261,7 +260,7 @@ TOOL_REGISTRY: dict[str, ToolMetadata] = {
         name="Comment on GitHub Issue",
         description="Add a comment to a GitHub issue",
         category="Development",
-        required_permission=Permission.WRITE_GITHUB,
+        required_permission="WRITE_GITHUB",
         required_env_vars=["GITHUB_TOKEN"],
     ),
     "github_commits": ToolMetadata(
@@ -269,7 +268,7 @@ TOOL_REGISTRY: dict[str, ToolMetadata] = {
         name="Get GitHub Commits",
         description="Retrieve recent commits from a repository",
         category="Development",
-        required_permission=Permission.READ_GITHUB,
+        required_permission="READ_GITHUB",
         required_env_vars=["GITHUB_TOKEN"],
     ),
 
@@ -279,7 +278,7 @@ TOOL_REGISTRY: dict[str, ToolMetadata] = {
         name="Text to Speech",
         description="Convert text to speech using ElevenLabs",
         category="AI & Voice",
-        required_permission=Permission.USE_VOICE,
+        required_permission="USE_VOICE",
         required_env_vars=["ELEVENLABS_API_KEY"],
     ),
 
@@ -289,7 +288,7 @@ TOOL_REGISTRY: dict[str, ToolMetadata] = {
         name="Send Instagram DM",
         description="Send a direct message on Instagram",
         category="Social Media",
-        required_permission=Permission.SEND_INSTAGRAM,
+        required_permission="SEND_INSTAGRAM",
         required_env_vars=["INSTAGRAM_ACCESS_TOKEN", "INSTAGRAM_BUSINESS_ID"],
     ),
     "instagram_reply": ToolMetadata(
@@ -297,7 +296,7 @@ TOOL_REGISTRY: dict[str, ToolMetadata] = {
         name="Reply to Instagram Comment",
         description="Reply to a comment on an Instagram post",
         category="Social Media",
-        required_permission=Permission.SEND_INSTAGRAM,
+        required_permission="SEND_INSTAGRAM",
         required_env_vars=["INSTAGRAM_ACCESS_TOKEN", "INSTAGRAM_BUSINESS_ID"],
     ),
     "instagram_post": ToolMetadata(
@@ -305,7 +304,7 @@ TOOL_REGISTRY: dict[str, ToolMetadata] = {
         name="Publish Instagram Photo",
         description="Publish a photo to Instagram",
         category="Social Media",
-        required_permission=Permission.SEND_INSTAGRAM,
+        required_permission="SEND_INSTAGRAM",
         required_env_vars=["INSTAGRAM_ACCESS_TOKEN", "INSTAGRAM_BUSINESS_ID"],
     ),
 
@@ -315,7 +314,7 @@ TOOL_REGISTRY: dict[str, ToolMetadata] = {
         name="Send Messenger Message",
         description="Send a message on Facebook Messenger",
         category="Social Media",
-        required_permission=Permission.SEND_MESSENGER,
+        required_permission="SEND_MESSENGER",
         required_env_vars=["FACEBOOK_PAGE_TOKEN", "FACEBOOK_APP_SECRET"],
     ),
     "messenger_buttons": ToolMetadata(
@@ -323,7 +322,7 @@ TOOL_REGISTRY: dict[str, ToolMetadata] = {
         name="Messenger Message with Buttons",
         description="Send a Messenger message with quick-reply buttons",
         category="Social Media",
-        required_permission=Permission.SEND_MESSENGER,
+        required_permission="SEND_MESSENGER",
         required_env_vars=["FACEBOOK_PAGE_TOKEN", "FACEBOOK_APP_SECRET"],
     ),
 
@@ -333,7 +332,7 @@ TOOL_REGISTRY: dict[str, ToolMetadata] = {
         name="Post to Teams Channel",
         description="Post a message to a Microsoft Teams channel",
         category="Communications",
-        required_permission=Permission.SEND_TEAMS,
+        required_permission="SEND_TEAMS",
         required_env_vars=["TEAMS_WEBHOOK_URL"],
     ),
     "teams_alert": ToolMetadata(
@@ -341,7 +340,7 @@ TOOL_REGISTRY: dict[str, ToolMetadata] = {
         name="Teams Alert Card",
         description="Send a formatted alert card to Teams",
         category="Communications",
-        required_permission=Permission.SEND_TEAMS,
+        required_permission="SEND_TEAMS",
         required_env_vars=["TEAMS_WEBHOOK_URL"],
     ),
 
@@ -351,7 +350,7 @@ TOOL_REGISTRY: dict[str, ToolMetadata] = {
         name="Read Airtable Records",
         description="Read records from an Airtable table",
         category="Database",
-        required_permission=Permission.READ_AIRTABLE,
+        required_permission="READ_AIRTABLE",
         required_env_vars=["AIRTABLE_API_KEY", "AIRTABLE_BASE_ID"],
     ),
     "airtable_create": ToolMetadata(
@@ -359,7 +358,7 @@ TOOL_REGISTRY: dict[str, ToolMetadata] = {
         name="Create Airtable Record",
         description="Create a new record in Airtable",
         category="Database",
-        required_permission=Permission.WRITE_AIRTABLE,
+        required_permission="WRITE_AIRTABLE",
         required_env_vars=["AIRTABLE_API_KEY", "AIRTABLE_BASE_ID"],
     ),
     "airtable_update": ToolMetadata(
@@ -367,7 +366,7 @@ TOOL_REGISTRY: dict[str, ToolMetadata] = {
         name="Update Airtable Record",
         description="Update an existing Airtable record",
         category="Database",
-        required_permission=Permission.WRITE_AIRTABLE,
+        required_permission="WRITE_AIRTABLE",
         required_env_vars=["AIRTABLE_API_KEY", "AIRTABLE_BASE_ID"],
     ),
     "airtable_search": ToolMetadata(
@@ -375,7 +374,7 @@ TOOL_REGISTRY: dict[str, ToolMetadata] = {
         name="Search Airtable Records",
         description="Search for records in Airtable by field value",
         category="Database",
-        required_permission=Permission.READ_AIRTABLE,
+        required_permission="READ_AIRTABLE",
         required_env_vars=["AIRTABLE_API_KEY", "AIRTABLE_BASE_ID"],
     ),
 
@@ -385,7 +384,7 @@ TOOL_REGISTRY: dict[str, ToolMetadata] = {
         name="Trigger Zapier Workflow",
         description="Trigger any Zapier webhook",
         category="Automation",
-        required_permission=Permission.TRIGGER_ZAPIER,
+        required_permission="TRIGGER_ZAPIER",
         required_env_vars=["ZAPIER_WEBHOOK_URL"],
     ),
     "zapier_new_lead": ToolMetadata(
@@ -393,7 +392,7 @@ TOOL_REGISTRY: dict[str, ToolMetadata] = {
         name="Zapier: New Lead Event",
         description="Fire Zapier 'new_lead' trigger",
         category="Automation",
-        required_permission=Permission.TRIGGER_ZAPIER,
+        required_permission="TRIGGER_ZAPIER",
         required_env_vars=["ZAPIER_WEBHOOK_URL"],
     ),
     "zapier_deal_closed": ToolMetadata(
@@ -401,7 +400,7 @@ TOOL_REGISTRY: dict[str, ToolMetadata] = {
         name="Zapier: Deal Closed Event",
         description="Fire Zapier 'deal_closed' trigger",
         category="Automation",
-        required_permission=Permission.TRIGGER_ZAPIER,
+        required_permission="TRIGGER_ZAPIER",
         required_env_vars=["ZAPIER_WEBHOOK_URL"],
     ),
 
@@ -411,7 +410,7 @@ TOOL_REGISTRY: dict[str, ToolMetadata] = {
         name="List Calendly Meetings",
         description="List upcoming Calendly meetings",
         category="Calendar & Scheduling",
-        required_permission=Permission.READ_CALENDLY,
+        required_permission="READ_CALENDLY",
         required_env_vars=["CALENDLY_API_KEY"],
     ),
     "calendly_link": ToolMetadata(
@@ -419,7 +418,7 @@ TOOL_REGISTRY: dict[str, ToolMetadata] = {
         name="Create Calendly Scheduling Link",
         description="Generate a scheduling link for a lead",
         category="Calendar & Scheduling",
-        required_permission=Permission.WRITE_CALENDLY,
+        required_permission="WRITE_CALENDLY",
         required_env_vars=["CALENDLY_API_KEY"],
     ),
     "calendly_cancel": ToolMetadata(
@@ -427,7 +426,7 @@ TOOL_REGISTRY: dict[str, ToolMetadata] = {
         name="Cancel Calendly Event",
         description="Cancel a Calendly event",
         category="Calendar & Scheduling",
-        required_permission=Permission.WRITE_CALENDLY,
+        required_permission="WRITE_CALENDLY",
         required_env_vars=["CALENDLY_API_KEY"],
     ),
 
@@ -437,7 +436,7 @@ TOOL_REGISTRY: dict[str, ToolMetadata] = {
         name="Add Mailchimp Subscriber",
         description="Add or update a subscriber in Mailchimp",
         category="Email Marketing",
-        required_permission=Permission.WRITE_MAILCHIMP,
+        required_permission="WRITE_MAILCHIMP",
         required_env_vars=["MAILCHIMP_API_KEY", "MAILCHIMP_SERVER"],
     ),
     "mailchimp_tag": ToolMetadata(
@@ -445,7 +444,7 @@ TOOL_REGISTRY: dict[str, ToolMetadata] = {
         name="Tag Mailchimp Subscriber",
         description="Apply tags to a Mailchimp subscriber",
         category="Email Marketing",
-        required_permission=Permission.WRITE_MAILCHIMP,
+        required_permission="WRITE_MAILCHIMP",
         required_env_vars=["MAILCHIMP_API_KEY", "MAILCHIMP_SERVER"],
     ),
     "mailchimp_unsubscribe": ToolMetadata(
@@ -453,7 +452,7 @@ TOOL_REGISTRY: dict[str, ToolMetadata] = {
         name="Unsubscribe from Mailchimp",
         description="Unsubscribe a contact from Mailchimp",
         category="Email Marketing",
-        required_permission=Permission.WRITE_MAILCHIMP,
+        required_permission="WRITE_MAILCHIMP",
         required_env_vars=["MAILCHIMP_API_KEY", "MAILCHIMP_SERVER"],
     ),
 
@@ -463,7 +462,7 @@ TOOL_REGISTRY: dict[str, ToolMetadata] = {
         name="Pipedrive Contact",
         description="Create or find a person in Pipedrive",
         category="CRM",
-        required_permission=Permission.WRITE_PIPEDRIVE,
+        required_permission="WRITE_PIPEDRIVE",
         required_env_vars=["PIPEDRIVE_API_KEY"],
     ),
     "pipedrive_deal": ToolMetadata(
@@ -471,7 +470,7 @@ TOOL_REGISTRY: dict[str, ToolMetadata] = {
         name="Create Pipedrive Deal",
         description="Create a deal in Pipedrive",
         category="CRM",
-        required_permission=Permission.WRITE_PIPEDRIVE,
+        required_permission="WRITE_PIPEDRIVE",
         required_env_vars=["PIPEDRIVE_API_KEY"],
     ),
     "pipedrive_note": ToolMetadata(
@@ -479,7 +478,7 @@ TOOL_REGISTRY: dict[str, ToolMetadata] = {
         name="Add Pipedrive Note",
         description="Add a note to a deal or person in Pipedrive",
         category="CRM",
-        required_permission=Permission.WRITE_PIPEDRIVE,
+        required_permission="WRITE_PIPEDRIVE",
         required_env_vars=["PIPEDRIVE_API_KEY"],
     ),
     "pipedrive_stage": ToolMetadata(
@@ -487,7 +486,7 @@ TOOL_REGISTRY: dict[str, ToolMetadata] = {
         name="Move Pipedrive Deal Stage",
         description="Move a deal to a different stage",
         category="CRM",
-        required_permission=Permission.WRITE_PIPEDRIVE,
+        required_permission="WRITE_PIPEDRIVE",
         required_env_vars=["PIPEDRIVE_API_KEY"],
     ),
 
@@ -497,7 +496,7 @@ TOOL_REGISTRY: dict[str, ToolMetadata] = {
         name="Create Monday.com Item",
         description="Create an item on a Monday.com board",
         category="Project Management",
-        required_permission=Permission.WRITE_MONDAY,
+        required_permission="WRITE_MONDAY",
         required_env_vars=["MONDAY_API_KEY"],
     ),
     "monday_update": ToolMetadata(
@@ -505,7 +504,7 @@ TOOL_REGISTRY: dict[str, ToolMetadata] = {
         name="Post Monday.com Update",
         description="Post a comment or update on a Monday item",
         category="Project Management",
-        required_permission=Permission.WRITE_MONDAY,
+        required_permission="WRITE_MONDAY",
         required_env_vars=["MONDAY_API_KEY"],
     ),
     "monday_move": ToolMetadata(
@@ -513,7 +512,7 @@ TOOL_REGISTRY: dict[str, ToolMetadata] = {
         name="Move Monday.com Item",
         description="Move an item to a different group",
         category="Project Management",
-        required_permission=Permission.WRITE_MONDAY,
+        required_permission="WRITE_MONDAY",
         required_env_vars=["MONDAY_API_KEY"],
     ),
 
@@ -523,7 +522,7 @@ TOOL_REGISTRY: dict[str, ToolMetadata] = {
         name="Send OpenPhone SMS",
         description="Send an SMS from OpenPhone",
         category="Communications",
-        required_permission=Permission.SEND_SMS,
+        required_permission="SEND_SMS",
         required_env_vars=["OPENPHONE_API_KEY"],
     ),
     "openphone_call": ToolMetadata(
@@ -531,7 +530,7 @@ TOOL_REGISTRY: dict[str, ToolMetadata] = {
         name="Initiate OpenPhone Call",
         description="Initiate an outbound call",
         category="Communications",
-        required_permission=Permission.SEND_SMS,
+        required_permission="SEND_SMS",
         required_env_vars=["OPENPHONE_API_KEY"],
     ),
     "openphone_history": ToolMetadata(
@@ -539,7 +538,7 @@ TOOL_REGISTRY: dict[str, ToolMetadata] = {
         name="OpenPhone Call/Message History",
         description="Get call or message history",
         category="Communications",
-        required_permission=Permission.READ_SMS,
+        required_permission="READ_SMS",
         required_env_vars=["OPENPHONE_API_KEY"],
     ),
 
@@ -549,7 +548,7 @@ TOOL_REGISTRY: dict[str, ToolMetadata] = {
         name="Send DocuSign Envelope",
         description="Send a document for eSignature",
         category="eSignature & Legal",
-        required_permission=Permission.SEND_DOCUSIGN,
+        required_permission="SEND_DOCUSIGN",
         required_env_vars=["DOCUSIGN_ACCOUNT_ID", "DOCUSIGN_ACCESS_TOKEN"],
     ),
     "docusign_status": ToolMetadata(
@@ -557,7 +556,7 @@ TOOL_REGISTRY: dict[str, ToolMetadata] = {
         name="DocuSign Envelope Status",
         description="Check the signing status of a DocuSign envelope",
         category="eSignature & Legal",
-        required_permission=Permission.READ_DOCUSIGN,
+        required_permission="READ_DOCUSIGN",
         required_env_vars=["DOCUSIGN_ACCOUNT_ID", "DOCUSIGN_ACCESS_TOKEN"],
     ),
     "docusign_void": ToolMetadata(
@@ -565,7 +564,7 @@ TOOL_REGISTRY: dict[str, ToolMetadata] = {
         name="Void DocuSign Envelope",
         description="Void or cancel a DocuSign envelope",
         category="eSignature & Legal",
-        required_permission=Permission.CANCEL_DOCUSIGN,
+        required_permission="CANCEL_DOCUSIGN",
         required_env_vars=["DOCUSIGN_ACCOUNT_ID", "DOCUSIGN_ACCESS_TOKEN"],
     ),
 
@@ -575,7 +574,7 @@ TOOL_REGISTRY: dict[str, ToolMetadata] = {
         name="Post to LinkedIn",
         description="Post a text update to LinkedIn",
         category="Social Media",
-        required_permission=Permission.SEND_LINKEDIN,
+        required_permission="SEND_LINKEDIN",
         required_env_vars=["LINKEDIN_ACCESS_TOKEN"],
     ),
     "linkedin_post_link": ToolMetadata(
@@ -583,7 +582,7 @@ TOOL_REGISTRY: dict[str, ToolMetadata] = {
         name="LinkedIn Post with Link Card",
         description="Post a LinkedIn update with a link card",
         category="Social Media",
-        required_permission=Permission.SEND_LINKEDIN,
+        required_permission="SEND_LINKEDIN",
         required_env_vars=["LINKEDIN_ACCESS_TOKEN"],
     ),
 
@@ -593,7 +592,7 @@ TOOL_REGISTRY: dict[str, ToolMetadata] = {
         name="Post Tweet",
         description="Post a tweet to X/Twitter",
         category="Social Media",
-        required_permission=Permission.SEND_TWITTER,
+        required_permission="SEND_TWITTER",
         required_env_vars=["TWITTER_API_KEY", "TWITTER_API_SECRET", "TWITTER_ACCESS_TOKEN"],
     ),
     "twitter_search": ToolMetadata(
@@ -601,7 +600,7 @@ TOOL_REGISTRY: dict[str, ToolMetadata] = {
         name="Search Tweets",
         description="Search for recent tweets",
         category="Social Media",
-        required_permission=Permission.READ_TWITTER,
+        required_permission="READ_TWITTER",
         required_env_vars=["TWITTER_BEARER_TOKEN"],
     ),
 
@@ -611,7 +610,7 @@ TOOL_REGISTRY: dict[str, ToolMetadata] = {
         name="Get Shopify Orders",
         description="List Shopify orders with optional filters",
         category="E-Commerce",
-        required_permission=Permission.READ_SHOPIFY,
+        required_permission="READ_SHOPIFY",
         required_env_vars=["SHOPIFY_STORE_DOMAIN", "SHOPIFY_ACCESS_TOKEN"],
     ),
     "shopify_customer": ToolMetadata(
@@ -619,7 +618,7 @@ TOOL_REGISTRY: dict[str, ToolMetadata] = {
         name="Search Shopify Customers",
         description="Search for Shopify customers",
         category="E-Commerce",
-        required_permission=Permission.READ_SHOPIFY,
+        required_permission="READ_SHOPIFY",
         required_env_vars=["SHOPIFY_STORE_DOMAIN", "SHOPIFY_ACCESS_TOKEN"],
     ),
     "shopify_discount": ToolMetadata(
@@ -627,7 +626,7 @@ TOOL_REGISTRY: dict[str, ToolMetadata] = {
         name="Create Shopify Discount Code",
         description="Create a discount/promotion code",
         category="E-Commerce",
-        required_permission=Permission.WRITE_SHOPIFY,
+        required_permission="WRITE_SHOPIFY",
         required_env_vars=["SHOPIFY_STORE_DOMAIN", "SHOPIFY_ACCESS_TOKEN"],
     ),
 
@@ -637,7 +636,7 @@ TOOL_REGISTRY: dict[str, ToolMetadata] = {
         name="Get Typeform Responses",
         description="Retrieve form responses as structured leads",
         category="Lead Capture",
-        required_permission=Permission.READ_TYPEFORM,
+        required_permission="READ_TYPEFORM",
         required_env_vars=["TYPEFORM_API_KEY"],
     ),
     "typeform_forms": ToolMetadata(
@@ -645,17 +644,17 @@ TOOL_REGISTRY: dict[str, ToolMetadata] = {
         name="List Typeform Forms",
         description="List available Typeform forms",
         category="Lead Capture",
-        required_permission=Permission.READ_TYPEFORM,
+        required_permission="READ_TYPEFORM",
         required_env_vars=["TYPEFORM_API_KEY"],
     ),
 
-    # ========== Dashboard Customization (7 tools) — Always available ==========
+    # ========== Dashboard Customization (7 tools) - Always available ==========
     "dashboard_list": ToolMetadata(
         tool_id="dashboard_list",
         name="List Dashboard Tabs & Widgets",
         description="Show the owner's current dashboard configuration",
         category="Dashboard",
-        required_permission=Permission.CUSTOMIZE_DASHBOARD,
+        required_permission="CUSTOMIZE_DASHBOARD",
         required_env_vars=[],
         always_available=True,
     ),
@@ -664,7 +663,7 @@ TOOL_REGISTRY: dict[str, ToolMetadata] = {
         name="Add Dashboard Tab",
         description="Add a new tab to the dashboard",
         category="Dashboard",
-        required_permission=Permission.CUSTOMIZE_DASHBOARD,
+        required_permission="CUSTOMIZE_DASHBOARD",
         required_env_vars=[],
         always_available=True,
     ),
@@ -673,7 +672,7 @@ TOOL_REGISTRY: dict[str, ToolMetadata] = {
         name="Remove Dashboard Tab",
         description="Remove a tab from the dashboard",
         category="Dashboard",
-        required_permission=Permission.CUSTOMIZE_DASHBOARD,
+        required_permission="CUSTOMIZE_DASHBOARD",
         required_env_vars=[],
         always_available=True,
     ),
@@ -682,7 +681,7 @@ TOOL_REGISTRY: dict[str, ToolMetadata] = {
         name="Add Widget to Tab",
         description="Add a widget to a dashboard tab",
         category="Dashboard",
-        required_permission=Permission.CUSTOMIZE_DASHBOARD,
+        required_permission="CUSTOMIZE_DASHBOARD",
         required_env_vars=[],
         always_available=True,
     ),
@@ -691,7 +690,7 @@ TOOL_REGISTRY: dict[str, ToolMetadata] = {
         name="Remove Widget from Tab",
         description="Remove a widget from a tab",
         category="Dashboard",
-        required_permission=Permission.CUSTOMIZE_DASHBOARD,
+        required_permission="CUSTOMIZE_DASHBOARD",
         required_env_vars=[],
         always_available=True,
     ),
@@ -700,7 +699,7 @@ TOOL_REGISTRY: dict[str, ToolMetadata] = {
         name="Change Dashboard Theme",
         description="Change dashboard accent color, card style, or density",
         category="Dashboard",
-        required_permission=Permission.CUSTOMIZE_DASHBOARD,
+        required_permission="CUSTOMIZE_DASHBOARD",
         required_env_vars=[],
         always_available=True,
     ),
@@ -709,7 +708,7 @@ TOOL_REGISTRY: dict[str, ToolMetadata] = {
         name="Reorder Dashboard Tabs",
         description="Rearrange dashboard tabs",
         category="Dashboard",
-        required_permission=Permission.CUSTOMIZE_DASHBOARD,
+        required_permission="CUSTOMIZE_DASHBOARD",
         required_env_vars=[],
         always_available=True,
     ),
@@ -720,7 +719,7 @@ TOOL_REGISTRY: dict[str, ToolMetadata] = {
         name="Check Rate Limits",
         description="Get current API rate limit status",
         category="System",
-        required_permission=Permission.CUSTOMIZE_DASHBOARD,  # Minimal permission
+        required_permission="CUSTOMIZE_DASHBOARD",  # Minimal permission
         required_env_vars=[],
         always_available=True,
     ),
@@ -758,3 +757,4 @@ def get_required_integrations() -> dict[str, list[str]]:
             integration_to_tools[env_var].add(tool.tool_id)
     
     return {k: sorted(list(v)) for k, v in integration_to_tools.items()}
+

@@ -1,4 +1,4 @@
-"""Integration Hub — module for connecting third-party services.
+﻿"""Integration Hub â€” module for connecting third-party services.
 
 Endpoints for managing API keys, testing connections, and monitoring
 integration health across all providers (Twilio, Anthropic, Stripe, etc.).
@@ -508,7 +508,7 @@ def health_check(request: Request) -> dict[str, Any]:
 def integration_env_status() -> dict[str, Any]:
     """Returns which integrations have env vars configured (no auth required).
 
-    This powers the admin connections page — shows which services have
+    This powers the admin connections page â€” shows which services have
     API keys set in Railway Variables, regardless of DB state.
     """
     from config.settings import get_settings
@@ -654,7 +654,7 @@ def integration_env_status() -> dict[str, Any]:
             "docs": "https://docs.followupboss.com",
             "free": False,
         },
-        # ── Social / Messaging Platforms ──────────────────────────────────────
+        # â”€â”€ Social / Messaging Platforms â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         "instagram": {
             "name": "Instagram",
             "configured": settings.is_configured("instagram_access_token") and settings.is_configured("instagram_business_id"),
@@ -695,7 +695,7 @@ def integration_env_status() -> dict[str, Any]:
             "docs": "https://developer.twitter.com/en/docs/twitter-api",
             "free": True,
         },
-        # ── Business Tools ────────────────────────────────────────────────────
+        # â”€â”€ Business Tools â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         "airtable": {
             "name": "Airtable",
             "configured": settings.is_configured("airtable_api_key") and settings.is_configured("airtable_base_id"),
@@ -854,7 +854,7 @@ def generate_marketing_image(payload: ImageGenerateRequest, request: Request) ->
 
 
 # ---------------------------------------------------------------------------
-# Tool execution endpoint — lets Commander take real actions
+# Tool execution endpoint â€” lets Commander take real actions
 # ---------------------------------------------------------------------------
 
 class ToolExecuteRequest(BaseModel):
@@ -947,7 +947,7 @@ def list_available_tools() -> dict[str, Any]:
             "available": available,
             "requires": requires,
             "admin_only": metadata.admin_only,
-            "permission": metadata.required_permission.name,
+            "permission": metadata.required_permission,
         })
     
     available_count = sum(1 for t in tools if t["available"])
