@@ -1,5 +1,6 @@
 """Webhook routes for ORB."""
 
+import json
 from datetime import datetime, timedelta, timezone
 from urllib.parse import parse_qs
 
@@ -732,4 +733,190 @@ async def telegram_updates_webhook(request: Request) -> dict[str, object]:
         result = handle_incoming_telegram_message(chat_id=chat_id, user_id=user_id, text=text)
         return {"received": True, "result": result}
     
+    return {"received": True}
+
+
+# ---------------------------------------------------------------------------
+# Instagram webhook — receives DMs, comments, story mentions
+# ---------------------------------------------------------------------------
+
+@router.get("/instagram")
+async def instagram_verify(request: Request) -> Response:
+    """Instagram webhook verification (GET challenge)."""
+    params = request.query_params
+    mode = params.get("hub.mode")
+    token = params.get("hub.verify_token")
+    challenge = params.get("hub.challenge")
+
+    settings = get_settings()
+    verify_token = settings.resolve("instagram_verify_token", default="orb_instagram_verify")
+
+    if mode == "subscribe" and token == verify_token:
+        logger.info("Instagram webhook verified")
+        return Response(content=challenge, media_type="text/plain")
+    raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Verification failed")
+
+
+@router.post("/instagram")
+async def instagram_webhook(request: Request) -> dict[str, object]:
+    """Handles inbound Instagram DMs, comments, and story mentions."""
+    from integrations.instagram_client import parse_inbound_message, send_dm, is_instagram_available
+
+    payload = await request.json()
+    logger.info("Instagram webhook: %s", payload.get("object", "unknown"))
+
+    if not is_instagram_available():
+        logger.warning("Instagram webhook received but integration not configured")
+        return {"received": True}
+
+    # Parse inbound DM
+    msg = parse_inbound_message(payload)
+    if msg and msg.get("text"):
+        sender_id = msg["sender_id"]
+        text = msg["text"]
+
+        # Route through Commander
+        try:
+            db = SupabaseService()
+            # Resolve owner by Instagram sender ID mapping
+            owner_rows = db.fetch_all("channel_mappings", {
+                "platform": "instagram",
+                "external_id": sender_id,
+            })
+            if owner_rows:
+                owner_id = owner_rows[0]["owner_id"]
+                from app.api.routes.commander import process_owner_channel_message
+                result = process_owner_channel_message(owner_id=owner_id, message_body=text)
+                # Send reply back via Instagram DM
+                if result and result.get("message"):
+                    try:
+                        send_dm(recipient_id=sender_id, text=str(result["message"])[:1000])
+                    except Exception as e:
+                        logger.warning("Failed to reply on Instagram: %s", e)
+            else:
+                logger.info("Unknown Instagram sender: %s — no owner mapping", sender_id)
+        except Exception as e:
+            logger.error("Instagram webhook processing error: %s", e)
+
+    return {"received": True}
+
+
+# ---------------------------------------------------------------------------
+# Facebook Messenger webhook — receives messages from Page conversations
+# ---------------------------------------------------------------------------
+
+@router.get("/messenger")
+async def messenger_verify(request: Request) -> Response:
+    """Facebook Messenger webhook verification (GET challenge)."""
+    params = request.query_params
+    mode = params.get("hub.mode")
+    token = params.get("hub.verify_token")
+    challenge = params.get("hub.challenge")
+
+    settings = get_settings()
+    verify_token = settings.resolve("messenger_verify_token", default="orb_messenger_verify")
+
+    if mode == "subscribe" and token == verify_token:
+        logger.info("Messenger webhook verified")
+        return Response(content=challenge, media_type="text/plain")
+    raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Verification failed")
+
+
+@router.post("/messenger")
+async def messenger_webhook(request: Request) -> dict[str, object]:
+    """Handles inbound Facebook Messenger messages."""
+    from integrations.facebook_messenger_client import (
+        parse_inbound_message, send_text, mark_seen, send_typing_indicator,
+        is_messenger_available, verify_webhook_signature,
+    )
+
+    body = await request.body()
+    payload = json.loads(body)
+    sig_header = request.headers.get("X-Hub-Signature-256", "")
+
+    # Verify signature
+    if not verify_webhook_signature(body, sig_header):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid signature")
+
+    if not is_messenger_available():
+        logger.warning("Messenger webhook received but integration not configured")
+        return {"received": True}
+
+    # Parse inbound message
+    msg = parse_inbound_message(payload)
+    if msg and msg.get("text"):
+        sender_id = msg["sender_id"]
+        text = msg["text"]
+
+        try:
+            # Show typing indicator while processing
+            mark_seen(sender_id)
+            send_typing_indicator(sender_id, on=True)
+
+            db = SupabaseService()
+            owner_rows = db.fetch_all("channel_mappings", {
+                "platform": "messenger",
+                "external_id": sender_id,
+            })
+            if owner_rows:
+                owner_id = owner_rows[0]["owner_id"]
+                from app.api.routes.commander import process_owner_channel_message
+                result = process_owner_channel_message(owner_id=owner_id, message_body=text)
+                send_typing_indicator(sender_id, on=False)
+                if result and result.get("message"):
+                    try:
+                        send_text(recipient_id=sender_id, text=str(result["message"])[:2000])
+                    except Exception as e:
+                        logger.warning("Failed to reply on Messenger: %s", e)
+            else:
+                logger.info("Unknown Messenger sender: %s — no owner mapping", sender_id)
+                send_typing_indicator(sender_id, on=False)
+        except Exception as e:
+            logger.error("Messenger webhook processing error: %s", e)
+
+    return {"received": True}
+
+
+# ---------------------------------------------------------------------------
+# Microsoft Teams Bot Framework webhook — receives bot activity payloads
+# ---------------------------------------------------------------------------
+
+@router.post("/teams/bot")
+async def teams_bot_webhook(request: Request) -> dict[str, object]:
+    """Handles Microsoft Teams Bot Framework activity messages."""
+    from integrations.teams_client import parse_bot_activity, reply_to_activity, is_teams_available
+
+    payload = await request.json()
+    logger.info("Teams bot activity: type=%s", payload.get("type", "unknown"))
+
+    activity = parse_bot_activity(payload)
+    if not activity or not activity.get("text"):
+        return {"received": True}
+
+    sender_id = activity["sender_id"]
+    text = activity["text"]
+
+    try:
+        db = SupabaseService()
+        owner_rows = db.fetch_all("channel_mappings", {
+            "platform": "teams",
+            "external_id": sender_id,
+        })
+        if owner_rows:
+            owner_id = owner_rows[0]["owner_id"]
+            from app.api.routes.commander import process_owner_channel_message
+            result = process_owner_channel_message(owner_id=owner_id, message_body=text)
+            if result and result.get("message") and is_teams_available():
+                try:
+                    reply_to_activity(
+                        service_url=activity["service_url"],
+                        conversation_id=activity["conversation_id"],
+                        activity_id=activity["activity_id"],
+                        text=str(result["message"]),
+                    )
+                except Exception as e:
+                    logger.warning("Failed to reply on Teams: %s", e)
+    except Exception as e:
+        logger.error("Teams webhook processing error: %s", e)
+
     return {"received": True}

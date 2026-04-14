@@ -328,6 +328,13 @@ def process_mobile_command(from_number: str, message_body: str) -> dict[str, Any
     return _process_owner_mobile_message(owner_id=owner_id, message_body=message_body)
 
 
+def process_owner_channel_message(owner_id: str, message_body: str) -> dict[str, Any] | None:
+    """Process a channel message when owner_id has already been resolved upstream."""
+    if not owner_id:
+        return None
+    return _process_owner_mobile_message(owner_id=owner_id, message_body=message_body)
+
+
 def process_owner_email_command(from_email: str, message_body: str) -> dict[str, Any] | None:
     owner = _find_owner_by_email(from_email)
     if not owner:
