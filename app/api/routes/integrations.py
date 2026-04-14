@@ -654,6 +654,128 @@ def integration_env_status() -> dict[str, Any]:
             "docs": "https://docs.followupboss.com",
             "free": False,
         },
+        # ── Social / Messaging Platforms ──────────────────────────────────────
+        "instagram": {
+            "name": "Instagram",
+            "configured": settings.is_configured("instagram_access_token") and settings.is_configured("instagram_business_id"),
+            "category": "Social Media",
+            "env_vars": ["INSTAGRAM_ACCESS_TOKEN", "INSTAGRAM_BUSINESS_ID"],
+            "docs": "https://developers.facebook.com/docs/instagram-api",
+            "free": True,
+        },
+        "facebook_messenger": {
+            "name": "Facebook Messenger",
+            "configured": settings.is_configured("facebook_page_token"),
+            "category": "Messaging",
+            "env_vars": ["FACEBOOK_PAGE_TOKEN", "FACEBOOK_APP_SECRET"],
+            "docs": "https://developers.facebook.com/docs/messenger-platform",
+            "free": True,
+        },
+        "teams": {
+            "name": "Microsoft Teams",
+            "configured": settings.is_configured("teams_webhook_url"),
+            "category": "Messaging",
+            "env_vars": ["TEAMS_WEBHOOK_URL"],
+            "docs": "https://learn.microsoft.com/en-us/microsoftteams/platform/webhooks-and-connectors/",
+            "free": True,
+        },
+        "linkedin": {
+            "name": "LinkedIn",
+            "configured": settings.is_configured("linkedin_access_token"),
+            "category": "Social Media",
+            "env_vars": ["LINKEDIN_ACCESS_TOKEN", "LINKEDIN_ORGANIZATION_ID"],
+            "docs": "https://docs.microsoft.com/en-us/linkedin/",
+            "free": True,
+        },
+        "twitter": {
+            "name": "Twitter / X",
+            "configured": settings.is_configured("twitter_api_key") or settings.is_configured("twitter_bearer_token"),
+            "category": "Social Media",
+            "env_vars": ["TWITTER_API_KEY", "TWITTER_API_SECRET", "TWITTER_ACCESS_TOKEN", "TWITTER_ACCESS_SECRET", "TWITTER_BEARER_TOKEN"],
+            "docs": "https://developer.twitter.com/en/docs/twitter-api",
+            "free": True,
+        },
+        # ── Business Tools ────────────────────────────────────────────────────
+        "airtable": {
+            "name": "Airtable",
+            "configured": settings.is_configured("airtable_api_key") and settings.is_configured("airtable_base_id"),
+            "category": "Database",
+            "env_vars": ["AIRTABLE_API_KEY", "AIRTABLE_BASE_ID"],
+            "docs": "https://airtable.com/developers/web/api/introduction",
+            "free": True,
+        },
+        "zapier": {
+            "name": "Zapier",
+            "configured": settings.is_configured("zapier_webhook_url"),
+            "category": "Automation",
+            "env_vars": ["ZAPIER_WEBHOOK_URL"],
+            "docs": "https://zapier.com/apps/webhook/integrations",
+            "free": True,
+        },
+        "calendly": {
+            "name": "Calendly",
+            "configured": settings.is_configured("calendly_api_key"),
+            "category": "Scheduling",
+            "env_vars": ["CALENDLY_API_KEY"],
+            "docs": "https://developer.calendly.com/api-docs",
+            "free": True,
+        },
+        "mailchimp": {
+            "name": "Mailchimp",
+            "configured": settings.is_configured("mailchimp_api_key") and settings.is_configured("mailchimp_server"),
+            "category": "Email Marketing",
+            "env_vars": ["MAILCHIMP_API_KEY", "MAILCHIMP_SERVER", "MAILCHIMP_LIST_ID"],
+            "docs": "https://mailchimp.com/developer/marketing/api/",
+            "free": True,
+        },
+        "pipedrive": {
+            "name": "Pipedrive CRM",
+            "configured": settings.is_configured("pipedrive_api_key"),
+            "category": "CRM",
+            "env_vars": ["PIPEDRIVE_API_KEY"],
+            "docs": "https://developers.pipedrive.com/docs/api/v1",
+            "free": True,
+        },
+        "monday": {
+            "name": "Monday.com",
+            "configured": settings.is_configured("monday_api_key"),
+            "category": "Project Management",
+            "env_vars": ["MONDAY_API_KEY"],
+            "docs": "https://developer.monday.com/api-reference/docs",
+            "free": True,
+        },
+        "openphone": {
+            "name": "OpenPhone",
+            "configured": settings.is_configured("openphone_api_key"),
+            "category": "Phone / SMS",
+            "env_vars": ["OPENPHONE_API_KEY"],
+            "docs": "https://www.openphone.com/docs/api-reference",
+            "free": False,
+        },
+        "docusign": {
+            "name": "DocuSign",
+            "configured": settings.is_configured("docusign_account_id") and settings.is_configured("docusign_access_token"),
+            "category": "eSignature",
+            "env_vars": ["DOCUSIGN_ACCOUNT_ID", "DOCUSIGN_ACCESS_TOKEN"],
+            "docs": "https://developers.docusign.com/docs/esign-rest-api",
+            "free": False,
+        },
+        "shopify": {
+            "name": "Shopify",
+            "configured": settings.is_configured("shopify_store_domain") and settings.is_configured("shopify_access_token"),
+            "category": "E-Commerce",
+            "env_vars": ["SHOPIFY_STORE_DOMAIN", "SHOPIFY_ACCESS_TOKEN"],
+            "docs": "https://shopify.dev/docs/api/admin-rest",
+            "free": False,
+        },
+        "typeform": {
+            "name": "Typeform",
+            "configured": settings.is_configured("typeform_api_key"),
+            "category": "Lead Capture",
+            "env_vars": ["TYPEFORM_API_KEY"],
+            "docs": "https://www.typeform.com/developers/create/",
+            "free": True,
+        },
     }
 
     configured_count = sum(1 for s in services.values() if s["configured"])
@@ -794,92 +916,46 @@ def execute_tool(payload: ToolExecuteRequest, request: Request) -> dict[str, Any
 
 @router.get("/tools/available")
 def list_available_tools() -> dict[str, Any]:
-    """List all tools and which ones are currently available based on env config."""
+    """List all tools and which ones are currently available based on env config.
+    
+    This endpoint auto-generates from the tool_registry, so it stays in sync
+    with the dispatcher. Single source of truth: agents/commander/tool_registry.py
+    """
     from config.settings import get_settings
+    from agents.commander.tool_registry import get_all_tools
+    
     s = get_settings()
-
-    tools = [
-        # Slack
-        {"tool": "slack_send", "name": "Send Slack Message", "category": "Comms",
-         "available": s.is_configured("slack_bot_token"), "requires": "SLACK_BOT_TOKEN"},
-        {"tool": "slack_alert", "name": "Send Slack Alert", "category": "Comms",
-         "available": s.is_configured("slack_bot_token"), "requires": "SLACK_BOT_TOKEN"},
-        # Calendar
-        {"tool": "calendar_list", "name": "List Calendar Events", "category": "Calendar",
-         "available": s.is_configured("google_refresh_token"), "requires": "GOOGLE_REFRESH_TOKEN"},
-        {"tool": "calendar_create", "name": "Create Calendar Event", "category": "Calendar",
-         "available": s.is_configured("google_refresh_token"), "requires": "GOOGLE_REFRESH_TOKEN"},
-        {"tool": "calendar_cancel", "name": "Cancel Calendar Event", "category": "Calendar",
-         "available": s.is_configured("google_refresh_token"), "requires": "GOOGLE_REFRESH_TOKEN"},
-        {"tool": "calendar_check", "name": "Check Availability", "category": "Calendar",
-         "available": s.is_configured("google_refresh_token"), "requires": "GOOGLE_REFRESH_TOKEN"},
-        # Email / SMS
-        {"tool": "email_send", "name": "Send Email", "category": "Comms",
-         "available": s.is_configured("resend_api_key"), "requires": "RESEND_API_KEY"},
-        {"tool": "sms_send", "name": "Send SMS", "category": "Comms",
-         "available": s.is_configured("twilio_account_sid"), "requires": "TWILIO_ACCOUNT_SID"},
-        # Notion
-        {"tool": "notion_create", "name": "Create Notion Page", "category": "Productivity",
-         "available": s.is_configured("notion_api_key"), "requires": "NOTION_API_KEY"},
-        {"tool": "notion_log", "name": "Log to Notion", "category": "Productivity",
-         "available": s.is_configured("notion_api_key"), "requires": "NOTION_API_KEY"},
-        {"tool": "notion_search", "name": "Search Notion", "category": "Productivity",
-         "available": s.is_configured("notion_api_key"), "requires": "NOTION_API_KEY"},
-        # HubSpot
-        {"tool": "hubspot_contact", "name": "Create/Find Contact", "category": "CRM",
-         "available": s.is_configured("hubspot_api_key"), "requires": "HUBSPOT_API_KEY"},
-        {"tool": "hubspot_deal", "name": "Create Deal", "category": "CRM",
-         "available": s.is_configured("hubspot_api_key"), "requires": "HUBSPOT_API_KEY"},
-        {"tool": "hubspot_note", "name": "Log CRM Note", "category": "CRM",
-         "available": s.is_configured("hubspot_api_key"), "requires": "HUBSPOT_API_KEY"},
-        {"tool": "hubspot_search", "name": "Search Contacts", "category": "CRM",
-         "available": s.is_configured("hubspot_api_key"), "requires": "HUBSPOT_API_KEY"},
-        # Follow Up Boss
-        {"tool": "fub_contact", "name": "Create FUB Contact", "category": "CRM",
-         "available": s.is_configured("followupboss_api_key"), "requires": "FOLLOWUPBOSS_API_KEY"},
-        {"tool": "fub_note", "name": "Add FUB Note", "category": "CRM",
-         "available": s.is_configured("followupboss_api_key"), "requires": "FOLLOWUPBOSS_API_KEY"},
-        {"tool": "fub_search", "name": "Search FUB Contacts", "category": "CRM",
-         "available": s.is_configured("followupboss_api_key"), "requires": "FOLLOWUPBOSS_API_KEY"},
-        # GitHub
-        {"tool": "github_issue", "name": "Create GitHub Issue", "category": "Dev",
-         "available": s.is_configured("github_token"), "requires": "GITHUB_TOKEN"},
-        {"tool": "github_comment", "name": "Comment on Issue", "category": "Dev",
-         "available": s.is_configured("github_token"), "requires": "GITHUB_TOKEN"},
-        {"tool": "github_commits", "name": "Get Recent Commits", "category": "Dev",
-         "available": s.is_configured("github_token"), "requires": "GITHUB_TOKEN"},
-        # Follow Up Boss CRM
-        {"tool": "fub_search", "name": "Search FUB Contacts", "category": "CRM",
-         "available": s.is_configured("followupboss_api_key"), "requires": "FOLLOWUPBOSS_API_KEY"},
-        {"tool": "fub_contact", "name": "Create FUB Lead", "category": "CRM",
-         "available": s.is_configured("followupboss_api_key"), "requires": "FOLLOWUPBOSS_API_KEY"},
-        {"tool": "fub_note", "name": "Add FUB Note", "category": "CRM",
-         "available": s.is_configured("followupboss_api_key"), "requires": "FOLLOWUPBOSS_API_KEY"},
-        {"tool": "fub_deal", "name": "Create FUB Deal", "category": "CRM",
-         "available": s.is_configured("followupboss_api_key"), "requires": "FOLLOWUPBOSS_API_KEY"},
-        {"tool": "fub_task", "name": "Create FUB Task", "category": "CRM",
-         "available": s.is_configured("followupboss_api_key"), "requires": "FOLLOWUPBOSS_API_KEY"},
-        {"tool": "fub_stage", "name": "Change FUB Stage", "category": "CRM",
-         "available": s.is_configured("followupboss_api_key"), "requires": "FOLLOWUPBOSS_API_KEY"},
-        {"tool": "fub_call", "name": "Log FUB Call", "category": "CRM",
-         "available": s.is_configured("followupboss_api_key"), "requires": "FOLLOWUPBOSS_API_KEY"},
-        {"tool": "fub_smart_lists", "name": "Get FUB Smart Lists", "category": "CRM",
-         "available": s.is_configured("followupboss_api_key"), "requires": "FOLLOWUPBOSS_API_KEY"},
-        {"tool": "fub_tasks_pending", "name": "Get FUB Pending Tasks", "category": "CRM",
-         "available": s.is_configured("followupboss_api_key"), "requires": "FOLLOWUPBOSS_API_KEY"},
-        # Voice
-        {"tool": "voice_speak", "name": "Text to Speech", "category": "AI",
-         "available": s.is_configured("elevenlabs_api_key"), "requires": "ELEVENLABS_API_KEY"},
-        # Utility
-        {"tool": "rate_status", "name": "Check Rate Limits", "category": "System",
-         "available": True, "requires": None},
-    ]
-
+    registry = get_all_tools()
+    
+    # Convert registry to API format
+    tools = []
+    for tool_id, metadata in registry.items():
+        # Determine if tool is available
+        if metadata.always_available:
+            available = True
+            requires = None
+        else:
+            # Check if all required env vars are configured
+            requires = metadata.required_env_vars[0] if metadata.required_env_vars else None
+            available = all(s.is_configured(env_var) for env_var in metadata.required_env_vars)
+        
+        tools.append({
+            "tool": metadata.tool_id,
+            "name": metadata.name,
+            "description": metadata.description,
+            "category": metadata.category,
+            "available": available,
+            "requires": requires,
+            "admin_only": metadata.admin_only,
+            "permission": metadata.required_permission.name,
+        })
+    
     available_count = sum(1 for t in tools if t["available"])
     return {
         "tools": tools,
         "available_count": available_count,
         "total_count": len(tools),
+        "categories": sorted(set(t["category"] for t in tools)),
     }
 
 
