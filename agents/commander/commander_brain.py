@@ -139,6 +139,13 @@ class CommanderBrain:
             parts.append(f"• Automation rules ({len(rules)}):")
             for r in rules[:3]:
                 parts.append(f"  - When {r.get('trigger','?')} → {r.get('action','?')}")
+        memory_file = str(bp.get("commander_memory_file") or "").strip()
+        if memory_file:
+            parts.append("• Durable owner memory file:")
+            for line in memory_file.splitlines()[:12]:
+                trimmed = line.strip()
+                if trimmed:
+                    parts.append(f"  - {trimmed[:220]}")
         tone = bp.get("communication_tone", "professional")
         length = bp.get("response_length", "concise")
         parts.append(f"• Communication: {tone}, {length}")
@@ -746,6 +753,9 @@ class CommanderBrain:
             "  • get_business_context   → show what I know about your business\n"
             "  • update_business_goal   → set or update primary/secondary goals\n"
             "  • add_automation_rule    → teach me an automatic workflow (trigger → action)\n"
+            "  • get_memory_file        → read your durable side memory file\n"
+            "  • append_memory_file     → append key context to your durable memory file\n"
+            "  • replace_memory_file    → overwrite your durable memory file\n"
             "\n"
             "PLATFORM SELF-IMPROVEMENT TOOLS — request features or report issues:\n"
             "  • request_platform_feature → file a feature/integration/fix request to the platform team\n"

@@ -51,6 +51,7 @@ DEFAULT_PROFILE: dict[str, Any] = {
     "tracked_metrics": [],
     "kpi_targets": {},
     "automation_rules": [],
+    "commander_memory_file": "",
     "platform_tier": "user",
     "is_platform_admin": False,
 }
@@ -81,6 +82,11 @@ class BusinessProfileUpdate(BaseModel):
     tracked_metrics: Optional[list] = None
     kpi_targets: Optional[dict] = None
     automation_rules: Optional[list] = None
+    commander_memory_file: Optional[str] = None
+
+
+class MemoryFileUpdate(BaseModel):
+    content: str
 
 
 # ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -157,6 +163,14 @@ def _build_context_string(profile: dict[str, Any]) -> str:
             trigger = rule.get("trigger", "?")
             action = rule.get("action", "?")
             lines.append(f"  - When {trigger} → {action}")
+
+    memory_file = str(profile.get("commander_memory_file") or "").strip()
+    if memory_file:
+        lines.append("Commander memory file (always honor):")
+        for line in memory_file.splitlines()[:12]:
+            trimmed = line.strip()
+            if trimmed:
+                lines.append(f"  {trimmed[:240]}")
 
     lines.append("=== END BUSINESS PROFILE ===")
     return "\n".join(lines)
@@ -278,4 +292,53 @@ async def get_context_string(request: Request):
         }
     except Exception as e:
         logger.error(f"Failed to build context string: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/memory-file")
+async def get_memory_file(request: Request):
+    """Returns the owner's Commander memory file as editable durable context."""
+    owner_id = _require_owner(request)
+    try:
+        db = SupabaseService()
+        rows = db.client.table("business_profiles") \
+            .select("owner_id, commander_memory_file, updated_at") \
+            .eq("owner_id", owner_id) \
+            .limit(1) \
+            .execute()
+        if rows.data:
+            row = rows.data[0]
+            return {
+                "owner_id": owner_id,
+                "content": str(row.get("commander_memory_file") or ""),
+                "updated_at": row.get("updated_at"),
+            }
+        return {"owner_id": owner_id, "content": "", "updated_at": None}
+    except Exception as e:
+        logger.error(f"Failed to get commander memory file: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.put("/memory-file")
+async def put_memory_file(request: Request, body: MemoryFileUpdate):
+    """Creates or updates the owner's Commander memory file content."""
+    owner_id = _require_owner(request)
+    try:
+        db = SupabaseService()
+        data = {
+            "owner_id": owner_id,
+            "commander_memory_file": body.content,
+        }
+        result = db.client.table("business_profiles") \
+            .upsert(data, on_conflict="owner_id") \
+            .execute()
+        row = result.data[0] if result.data else data
+        return {
+            "owner_id": owner_id,
+            "content": str(row.get("commander_memory_file") or body.content),
+            "updated_at": row.get("updated_at"),
+            "status": "saved",
+        }
+    except Exception as e:
+        logger.error(f"Failed to save commander memory file: {e}")
         raise HTTPException(status_code=500, detail=str(e))

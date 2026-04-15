@@ -294,6 +294,9 @@ class ToolDispatcher:
             "get_business_context": self._get_business_context,
             "update_business_goal": self._update_business_goal,
             "add_automation_rule": self._add_automation_rule,
+            "get_memory_file": self._get_memory_file,
+            "append_memory_file": self._append_memory_file,
+            "replace_memory_file": self._replace_memory_file,
             # Platform Self-Improvement — request → build → deploy loop
             "request_platform_feature": self._request_platform_feature,
             "check_my_requests": self._check_my_requests,
@@ -1707,6 +1710,76 @@ class ToolDispatcher:
             )
         except Exception as e:
             return ToolResult("add_automation_rule", False, error=str(e))
+
+    def _get_memory_file(self, p: dict[str, Any]) -> ToolResult:
+        """Get the owner's durable Commander memory file contents."""
+        try:
+            from app.database.connection import SupabaseService
+
+            db = SupabaseService()
+            rows = db.client.table("business_profiles") \
+                .select("commander_memory_file") \
+                .eq("owner_id", self.owner_id) \
+                .limit(1) \
+                .execute()
+
+            if not rows.data:
+                return ToolResult("get_memory_file", True, data="Memory file is empty.")
+
+            content = str(rows.data[0].get("commander_memory_file") or "").strip()
+            return ToolResult("get_memory_file", True, data=content or "Memory file is empty.")
+        except Exception as e:
+            return ToolResult("get_memory_file", False, error=str(e))
+
+    def _append_memory_file(self, p: dict[str, Any]) -> ToolResult:
+        """Append a note block to the owner's durable Commander memory file.
+
+        Params: text (str)
+        """
+        try:
+            from app.database.connection import SupabaseService
+
+            text = str(p.get("text") or "").strip()
+            if not text:
+                return ToolResult("append_memory_file", False, error="Missing 'text'.")
+
+            db = SupabaseService()
+            rows = db.client.table("business_profiles") \
+                .select("commander_memory_file") \
+                .eq("owner_id", self.owner_id) \
+                .limit(1) \
+                .execute()
+
+            existing = ""
+            if rows.data:
+                existing = str(rows.data[0].get("commander_memory_file") or "")
+
+            merged = (existing + "\n\n" + text).strip() if existing.strip() else text
+            db.client.table("business_profiles") \
+                .upsert({"owner_id": self.owner_id, "commander_memory_file": merged}, on_conflict="owner_id") \
+                .execute()
+
+            return ToolResult("append_memory_file", True, data="Saved to memory file.")
+        except Exception as e:
+            return ToolResult("append_memory_file", False, error=str(e))
+
+    def _replace_memory_file(self, p: dict[str, Any]) -> ToolResult:
+        """Replace the owner's durable Commander memory file.
+
+        Params: content (str)
+        """
+        try:
+            from app.database.connection import SupabaseService
+
+            content = str(p.get("content") or "")
+            db = SupabaseService()
+            db.client.table("business_profiles") \
+                .upsert({"owner_id": self.owner_id, "commander_memory_file": content}, on_conflict="owner_id") \
+                .execute()
+
+            return ToolResult("replace_memory_file", True, data="Memory file replaced.")
+        except Exception as e:
+            return ToolResult("replace_memory_file", False, error=str(e))
 
     # ──────────────────────────────────────────────────────────────────────────
     # PLATFORM SELF-IMPROVEMENT TOOLS
