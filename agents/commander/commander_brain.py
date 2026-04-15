@@ -89,6 +89,93 @@ class CommanderBrain:
                     profile[key] = row.get(key)
         return profile
 
+    def _load_business_profile(self, owner_id: str) -> dict[str, Any]:
+        """Loads the owner's business profile — the identity engine for Commander.
+
+        This is what makes every owner's experience uniquely their own.
+        Commander reads this on every conversation to personalize everything.
+        """
+        rows = self._fetch_rows("business_profiles", {"owner_id": owner_id})
+        if not rows:
+            return {}
+        return rows[0]
+
+    def _build_business_context(self, bp: dict[str, Any]) -> str:
+        """Converts a business profile dict into Commander's identity context block."""
+        if not bp:
+            return ""
+        parts = ["YOUR OWNER'S BUSINESS:"]
+        if bp.get("business_name"):
+            parts.append(f"• Business: {bp['business_name']}")
+        if bp.get("industry"):
+            parts.append(f"• Industry: {bp['industry']}")
+        if bp.get("products_services"):
+            parts.append(f"• What they sell: {bp['products_services']}")
+        if bp.get("target_customer"):
+            parts.append(f"• Their customers: {bp['target_customer']}")
+        if bp.get("avg_deal_size"):
+            parts.append(f"• Avg deal size: {bp['avg_deal_size']}")
+        if bp.get("sales_cycle"):
+            parts.append(f"• Sales cycle: {bp['sales_cycle']}")
+        if bp.get("primary_goal"):
+            parts.append(f"• Primary goal: {bp['primary_goal']}")
+        if bp.get("current_challenges"):
+            parts.append(f"• Current challenge: {bp['current_challenges']}")
+        kpis = bp.get("kpi_targets") or {}
+        if kpis:
+            kpi_str = ", ".join(f"{k}={v}" for k, v in list(kpis.items())[:4])
+            parts.append(f"• KPI targets: {kpi_str}")
+        metrics = bp.get("tracked_metrics") or []
+        if metrics:
+            parts.append(f"• Always track: {', '.join(str(m) for m in metrics[:5])}")
+        team = bp.get("team_size", 1)
+        parts.append(f"• Team: {team} person{'s' if team != 1 else ''}")
+        members = bp.get("key_team_members") or []
+        if members:
+            mstr = ", ".join(f"{m.get('name','?')} ({m.get('role','?')})" for m in members[:4])
+            parts.append(f"• Key people: {mstr}")
+        rules = bp.get("automation_rules") or []
+        if rules:
+            parts.append(f"• Automation rules ({len(rules)}):")
+            for r in rules[:3]:
+                parts.append(f"  - When {r.get('trigger','?')} → {r.get('action','?')}")
+        tone = bp.get("communication_tone", "professional")
+        length = bp.get("response_length", "concise")
+        parts.append(f"• Communication: {tone}, {length}")
+        return "\n".join(parts)
+
+    def _load_unread_messages(self, owner_id: str) -> list[dict[str, Any]]:
+        """Loads unread inter-agent messages for this owner's Commander."""
+        db = self._get_db()
+        if not db:
+            return []
+        try:
+            rows = db.client.table("agent_messages") \
+                .select("id,from_owner_id,subject,body,message_type,created_at") \
+                .eq("to_owner_id", owner_id) \
+                .eq("is_read", False) \
+                .order("created_at", desc=True) \
+                .limit(5) \
+                .execute()
+            return rows.data or []
+        except Exception:
+            return []
+
+    def _load_is_admin(self, owner_id: str) -> bool:
+        """Check if this owner is the platform admin (Eduardo)."""
+        db = self._get_db()
+        if not db:
+            return False
+        try:
+            rows = db.client.table("business_profiles") \
+                .select("is_platform_admin") \
+                .eq("owner_id", owner_id) \
+                .limit(1) \
+                .execute()
+            return bool(rows.data and rows.data[0].get("is_platform_admin"))
+        except Exception:
+            return False
+
     def _load_learned_skills(self, owner_id: str) -> list[dict[str, Any]]:
         """Loads Commander's learned skills for this owner."""
         skills = self._fetch_rows("commander_skills", {"owner_id": owner_id})
@@ -625,38 +712,86 @@ class CommanderBrain:
         recent_feedback = self._load_recent_feedback(owner_id)
         feedback_context = self._build_feedback_context(recent_feedback)
 
+        # Load business profile — the identity engine
+        business_profile = self._load_business_profile(owner_id)
+        business_context = self._build_business_context(business_profile)
+        bp_commander_name = business_profile.get("commander_name") or commander_name
+        bp_tone = business_profile.get("communication_tone", "professional")
+        bp_length = business_profile.get("response_length", "concise")
+        is_admin = self._load_is_admin(owner_id)
+
+        # Load unread inter-agent messages
+        unread_msgs = self._load_unread_messages(owner_id)
+        unread_context = ""
+        if unread_msgs:
+            lines = [f"\nUNREAD MESSAGES ({len(unread_msgs)}):"]
+            for m in unread_msgs:
+                lines.append(f"• [{m['message_type'].upper()}] {m.get('subject','')}: {str(m.get('body',''))[:80]}")
+            unread_context = "\n".join(lines)
+
         system_prompt = (
-            f"You are {commander_name}, the personal AI chief of staff for {owner_name}.\n"
+            f"You are {bp_commander_name}, the personal AI chief of staff for {owner_name}.\n"
+            f"Communication style: {bp_tone}. Response length: {bp_length}.\n"
             "You have real-time access to: leads pipeline, calendar, pending approvals, AI costs,"
-            " platform health, and Orion paper trading results.\n"
+            " platform health, integration status, and trading results.\n"
             "Respond as their trusted chief of staff. Be direct. Lead with the answer."
             " Tell them what you are doing about it. Use 'I'. Maximum 3 paragraphs unless asked for detail.\n"
-            "You can learn and remember things the owner teaches you. If they say 'remember' or 'learn' something,"
-            " acknowledge it and confirm you will apply it going forward.\n"
-            "You continuously self-improve based on feedback. Apply the lessons below.\n"
+            "You can learn and remember things the owner teaches you. If they say 'remember' or 'from now on',"
+            " use set_business_context or add_automation_rule to save it permanently.\n"
+            "You continuously self-improve based on feedback.\n"
             "\n"
-            "DASHBOARD CUSTOMIZATION: You can reshape the owner's dashboard in real time via conversation.\n"
-            "Use these tools when the owner asks to change their dashboard layout or appearance:\n"
-            "  • dashboard_list           → show current tabs and widgets\n"
-            "  • dashboard_add_tab        → add a new tab (params: label, icon)\n"
-            "  • dashboard_remove_tab     → remove a tab by id (protected: overview, commander)\n"
-            "  • dashboard_add_widget     → add a widget to a tab (params: tab_id, widget_type, title, size)\n"
-            "    Widget types: stat, activity, chat, agents, calendar, crm, chart, list, custom\n"
-            "    Sizes: sm, md, lg, full\n"
-            "  • dashboard_remove_widget  → remove a widget (params: tab_id, widget_id)\n"
-            "  • dashboard_change_theme   → change visual style (params: accent_color, card_style,\n"
-            "    density, sidebar_style, font, commander_position)\n"
-            "    Colors: #8B5CF6 purple, #3B82F6 blue, #10B981 green, #F59E0B amber, #EF4444 red\n"
-            "    card_style: bordered | filled | glass\n"
-            "    density: compact | comfortable | spacious\n"
-            "    commander_position: sidebar | tab | floating | hidden\n"
-            "  • dashboard_reorder_tabs   → reorder tabs (param: tab_order as list of tab IDs)\n"
-            "Always confirm changes out loud: 'I've added a CRM tab to your dashboard.'\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            "BUSINESS IDENTITY TOOLS — teach me about your business:\n"
+            "  • set_business_context   → update business profile (name, industry, customers, goals, tone)\n"
+            "  • get_business_context   → show what I know about your business\n"
+            "  • update_business_goal   → set or update primary/secondary goals\n"
+            "  • add_automation_rule    → teach me an automatic workflow (trigger → action)\n"
+            "\n"
+            "PLATFORM SELF-IMPROVEMENT TOOLS — request features or report issues:\n"
+            "  • request_platform_feature → file a feature/integration/fix request to the platform team\n"
+            "    params: request_type ('integration'|'feature'|'fix'|'workflow'|'question'), title, description, priority\n"
+            "  • check_my_requests      → check status of your filed requests\n"
+            "  • message_admin_agent    → send a direct message to the platform admin's Commander\n"
+            "\n"
+            "DASHBOARD CUSTOMIZATION:\n"
+            "  • dashboard_list / dashboard_add_tab / dashboard_remove_tab\n"
+            "  • dashboard_add_widget / dashboard_remove_widget / dashboard_change_theme / dashboard_reorder_tabs\n"
+            "  Widget types: stat, activity, chat, agents, calendar, crm, chart, list, custom\n"
+            "  Always confirm changes: 'I've updated your dashboard.'\n"
         )
+
+        if is_admin:
+            system_prompt += (
+                "\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "PLATFORM ADMIN TOOLS (you are the platform owner — use these to manage the platform):\n"
+                "  • list_platform_inbox  → see all pending feature requests from users\n"
+                "  • respond_to_request   → respond to a user request and update status\n"
+                "    params: request_id, status, response_message, admin_notes\n"
+                "  • create_code_task     → queue work for the VS Code / Claude Code agent\n"
+                "    params: title, description, task_type, files_to_create, files_to_modify,\n"
+                "            acceptance_criteria, tech_context, priority, source_request_id\n"
+                "  • list_code_tasks      → see all tasks in the code agent queue\n"
+                "  • approve_code_task    → approve generated code → triggers deploy\n"
+                "    params: task_id, review_notes\n"
+                "  • reject_code_task     → send code back for revision\n"
+                "    params: task_id, review_notes (must explain what to fix)\n"
+                "\n"
+                "IMPORTANT: You are running as the PLATFORM ADMIN. You can:\n"
+                "  1. See and respond to all user requests from the inbox\n"
+                "  2. Create code tasks that the VS Code agent will implement\n"
+                "  3. Review and approve generated code before it deploys\n"
+                "  4. This platform never stops improving — user requests flow to you, you build, you approve.\n"
+            )
+
+        if business_context:
+            system_prompt += f"\n{business_context}\n"
         if skills_context:
             system_prompt += f"\n{skills_context}\n"
         if feedback_context:
             system_prompt += f"\n{feedback_context}\n"
+        if unread_context:
+            system_prompt += f"\n{unread_context}\n"
 
         user_prompt = (
             f"Current context:\n{context_summary}\n\n"

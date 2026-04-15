@@ -289,6 +289,22 @@ class ToolDispatcher:
             "dashboard_remove_widget": self._dashboard_remove_widget,
             "dashboard_change_theme": self._dashboard_change_theme,
             "dashboard_reorder_tabs": self._dashboard_reorder_tabs,
+            # Business Profile — per-owner identity engine
+            "set_business_context": self._set_business_context,
+            "get_business_context": self._get_business_context,
+            "update_business_goal": self._update_business_goal,
+            "add_automation_rule": self._add_automation_rule,
+            # Platform Self-Improvement — request → build → deploy loop
+            "request_platform_feature": self._request_platform_feature,
+            "check_my_requests": self._check_my_requests,
+            "message_admin_agent": self._message_admin_agent,
+            # Admin-only: Platform Inbox + Code Task Queue
+            "list_platform_inbox": self._list_platform_inbox,
+            "respond_to_request": self._respond_to_request,
+            "create_code_task": self._create_code_task,
+            "list_code_tasks": self._list_code_tasks,
+            "approve_code_task": self._approve_code_task,
+            "reject_code_task": self._reject_code_task,
             # Utility
             "rate_status": self._rate_status,
         }
@@ -1568,3 +1584,484 @@ class ToolDispatcher:
             )
         except Exception as e:
             logger.debug("Could not log tool action: %s", e)
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # BUSINESS PROFILE TOOLS
+    # Per-owner business identity engine. Commander reads this context on every
+    # conversation to personalize responses to the owner's specific business.
+    # ──────────────────────────────────────────────────────────────────────────
+
+    def _set_business_context(self, p: dict[str, Any]) -> ToolResult:
+        """Teach Commander about your business: name, industry, customers, goals.
+
+        Params: any subset of —
+          business_name, industry, business_type, products_services,
+          target_customer, avg_deal_size, sales_cycle, team_size,
+          primary_goal, current_challenges, communication_tone,
+          commander_name, kpi_targets (dict), tracked_metrics (list)
+        """
+        try:
+            from app.database.connection import SupabaseService
+            db = SupabaseService()
+            updates = {k: v for k, v in p.items() if v is not None and k != "tool"}
+            updates["owner_id"] = self.owner_id
+            db.client.table("business_profiles") \
+                .upsert(updates, on_conflict="owner_id") \
+                .execute()
+            saved_fields = [k for k in updates if k != "owner_id"]
+            return ToolResult(
+                "set_business_context", True,
+                data=f"Business profile updated. Saved: {', '.join(saved_fields)}. "
+                     f"I will use this context in every future conversation."
+            )
+        except Exception as e:
+            return ToolResult("set_business_context", False, error=str(e))
+
+    def _get_business_context(self, p: dict[str, Any]) -> ToolResult:
+        """Load the current owner's business profile for display or verification."""
+        try:
+            from app.database.connection import SupabaseService
+            db = SupabaseService()
+            rows = db.client.table("business_profiles") \
+                .select("*") \
+                .eq("owner_id", self.owner_id) \
+                .limit(1) \
+                .execute()
+            if not rows.data:
+                return ToolResult(
+                    "get_business_context", True,
+                    data="No business profile set yet. Tell me about your business and I will remember it."
+                )
+            profile = rows.data[0]
+            summary_parts = []
+            if profile.get("business_name"):
+                summary_parts.append(f"Business: {profile['business_name']}")
+            if profile.get("industry"):
+                summary_parts.append(f"Industry: {profile['industry']}")
+            if profile.get("primary_goal"):
+                summary_parts.append(f"Goal: {profile['primary_goal']}")
+            if profile.get("target_customer"):
+                summary_parts.append(f"Customer: {profile['target_customer']}")
+            if profile.get("avg_deal_size"):
+                summary_parts.append(f"Avg deal: {profile['avg_deal_size']}")
+            return ToolResult("get_business_context", True, data="\n".join(summary_parts) or "Profile exists but has no data yet.")
+        except Exception as e:
+            return ToolResult("get_business_context", False, error=str(e))
+
+    def _update_business_goal(self, p: dict[str, Any]) -> ToolResult:
+        """Update the primary goal or add a secondary goal.
+
+        Params: primary_goal (str), secondary_goal (str, added to list)
+        """
+        try:
+            from app.database.connection import SupabaseService
+            db = SupabaseService()
+            updates: dict[str, Any] = {"owner_id": self.owner_id}
+            if p.get("primary_goal"):
+                updates["primary_goal"] = p["primary_goal"]
+            if p.get("secondary_goal"):
+                # Append to existing list
+                existing = db.client.table("business_profiles") \
+                    .select("secondary_goals") \
+                    .eq("owner_id", self.owner_id) \
+                    .limit(1) \
+                    .execute()
+                goals = existing.data[0].get("secondary_goals") or [] if existing.data else []
+                goals.append(p["secondary_goal"])
+                updates["secondary_goals"] = goals
+            db.client.table("business_profiles") \
+                .upsert(updates, on_conflict="owner_id") \
+                .execute()
+            return ToolResult("update_business_goal", True, data=f"Goal updated. I will keep this top of mind.")
+        except Exception as e:
+            return ToolResult("update_business_goal", False, error=str(e))
+
+    def _add_automation_rule(self, p: dict[str, Any]) -> ToolResult:
+        """Add an automation rule — teach Commander when to do something automatically.
+
+        Params: trigger (str), action (str), conditions (str, optional)
+        Example: trigger='new lead from Typeform', action='add to FUB and send SMS'
+        """
+        try:
+            from app.database.connection import SupabaseService
+            db = SupabaseService()
+            rule = {
+                "trigger": p.get("trigger", ""),
+                "action": p.get("action", ""),
+                "conditions": p.get("conditions", ""),
+            }
+            existing = db.client.table("business_profiles") \
+                .select("automation_rules") \
+                .eq("owner_id", self.owner_id) \
+                .limit(1) \
+                .execute()
+            rules = existing.data[0].get("automation_rules") or [] if existing.data else []
+            rules.append(rule)
+            db.client.table("business_profiles") \
+                .upsert({"owner_id": self.owner_id, "automation_rules": rules}, on_conflict="owner_id") \
+                .execute()
+            return ToolResult(
+                "add_automation_rule", True,
+                data=f"Automation rule saved: When '{rule['trigger']}' → '{rule['action']}'. "
+                     f"I will execute this automatically from now on."
+            )
+        except Exception as e:
+            return ToolResult("add_automation_rule", False, error=str(e))
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # PLATFORM SELF-IMPROVEMENT TOOLS
+    # User agents can request features and communicate with Eduardo's admin agent.
+    # Eduardo's agent can respond, build, and deploy — all from conversation.
+    # ──────────────────────────────────────────────────────────────────────────
+
+    def _request_platform_feature(self, p: dict[str, Any]) -> ToolResult:
+        """File a feature/integration/help request to the platform admin (Eduardo's agent).
+
+        Params: request_type ('integration'|'feature'|'workflow'|'fix'|'question'),
+                title, description, priority ('low'|'normal'|'high'|'urgent')
+        """
+        try:
+            import urllib.request, json
+            from app.database.connection import SupabaseService
+            db = SupabaseService()
+
+            # Find the platform admin
+            admin_rows = db.client.table("business_profiles") \
+                .select("owner_id") \
+                .eq("is_platform_admin", True) \
+                .limit(1) \
+                .execute()
+            admin_id = admin_rows.data[0]["owner_id"] if admin_rows.data else None
+
+            req_data = {
+                "requester_id": self.owner_id,
+                "request_type": p.get("request_type", "feature"),
+                "title": p.get("title", "Untitled request"),
+                "description": p.get("description", ""),
+                "priority": p.get("priority", "normal"),
+                "status": "pending",
+                "handled_by_owner_id": admin_id,
+            }
+            result = db.client.table("platform_requests").insert(req_data).execute()
+            req_id = result.data[0]["id"] if result.data else "unknown"
+
+            # Notify admin
+            if admin_id:
+                db.client.table("agent_messages").insert({
+                    "from_owner_id": self.owner_id,
+                    "to_owner_id": admin_id,
+                    "message_type": "request",
+                    "subject": f"[{p.get('request_type','feature').upper()}] {p.get('title','')}",
+                    "body": p.get("description", ""),
+                    "payload": {"request_id": req_id, "priority": p.get("priority", "normal")},
+                    "thread_id": req_id,
+                }).execute()
+
+            return ToolResult(
+                "request_platform_feature", True,
+                data=f"Request filed (ID: {req_id[:8]}). "
+                     f"The platform team will review your '{p.get('request_type', 'feature')}' request: "
+                     f"'{p.get('title', '')}'. You will be notified when it is built."
+            )
+        except Exception as e:
+            return ToolResult("request_platform_feature", False, error=str(e))
+
+    def _check_my_requests(self, p: dict[str, Any]) -> ToolResult:
+        """Check the status of your filed platform requests."""
+        try:
+            from app.database.connection import SupabaseService
+            db = SupabaseService()
+            rows = db.client.table("platform_requests") \
+                .select("id,title,request_type,status,response_message,created_at") \
+                .eq("requester_id", self.owner_id) \
+                .order("created_at", desc=True) \
+                .limit(10) \
+                .execute()
+            if not rows.data:
+                return ToolResult("check_my_requests", True, data="No platform requests filed yet.")
+            lines = []
+            for r in rows.data:
+                lines.append(f"• [{r['status'].upper()}] {r['title']} ({r['request_type']})")
+                if r.get("response_message"):
+                    lines.append(f"  Response: {r['response_message'][:100]}")
+            return ToolResult("check_my_requests", True, data="\n".join(lines))
+        except Exception as e:
+            return ToolResult("check_my_requests", False, error=str(e))
+
+    def _message_admin_agent(self, p: dict[str, Any]) -> ToolResult:
+        """Send a direct message to the platform admin's Commander.
+
+        Params: subject (str), body (str), message_type ('request'|'question'|'feedback')
+        """
+        try:
+            from app.database.connection import SupabaseService
+            db = SupabaseService()
+            admin_rows = db.client.table("business_profiles") \
+                .select("owner_id") \
+                .eq("is_platform_admin", True) \
+                .limit(1) \
+                .execute()
+            if not admin_rows.data:
+                return ToolResult("message_admin_agent", False, error="No platform admin found.")
+
+            admin_id = admin_rows.data[0]["owner_id"]
+            db.client.table("agent_messages").insert({
+                "from_owner_id": self.owner_id,
+                "to_owner_id": admin_id,
+                "message_type": p.get("message_type", "request"),
+                "subject": p.get("subject", "Message from user agent"),
+                "body": p.get("body", ""),
+                "payload": {},
+            }).execute()
+            return ToolResult("message_admin_agent", True, data=f"Message sent to the platform admin's Commander.")
+        except Exception as e:
+            return ToolResult("message_admin_agent", False, error=str(e))
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # ADMIN-ONLY TOOLS (Eduardo's Commander)
+    # These tools only work if the owner has is_platform_admin = true
+    # ──────────────────────────────────────────────────────────────────────────
+
+    def _assert_admin(self) -> None:
+        from app.database.connection import SupabaseService
+        db = SupabaseService()
+        rows = db.client.table("business_profiles") \
+            .select("is_platform_admin") \
+            .eq("owner_id", self.owner_id) \
+            .limit(1) \
+            .execute()
+        if not (rows.data and rows.data[0].get("is_platform_admin")):
+            raise PermissionError("This tool is only available to the platform admin.")
+
+    def _list_platform_inbox(self, p: dict[str, Any]) -> ToolResult:
+        """Show Eduardo's platform inbox: all pending feature requests from users."""
+        try:
+            self._assert_admin()
+            from app.database.connection import SupabaseService
+            db = SupabaseService()
+            rows = db.client.table("platform_requests") \
+                .select("id,title,request_type,priority,status,created_at") \
+                .in_("status", ["pending", "acknowledged", "needs_info"]) \
+                .order("priority", desc=True) \
+                .order("created_at") \
+                .limit(20) \
+                .execute()
+            if not rows.data:
+                return ToolResult("list_platform_inbox", True, data="No pending platform requests. All caught up.")
+            lines = [f"Platform Inbox — {len(rows.data)} pending:"]
+            for r in rows.data:
+                lines.append(f"• [{r['priority'].upper()}] [{r['id'][:8]}] {r['title']} ({r['request_type']})")
+            return ToolResult("list_platform_inbox", True, data="\n".join(lines))
+        except PermissionError as e:
+            return ToolResult("list_platform_inbox", False, error=str(e))
+        except Exception as e:
+            return ToolResult("list_platform_inbox", False, error=str(e))
+
+    def _respond_to_request(self, p: dict[str, Any]) -> ToolResult:
+        """Respond to a user's platform request and update its status.
+
+        Params: request_id (str), status ('acknowledged'|'in_progress'|'completed'|'rejected'|'needs_info'),
+                response_message (str), admin_notes (str, optional)
+        """
+        try:
+            self._assert_admin()
+            from app.database.connection import SupabaseService
+            from datetime import datetime, timezone
+            db = SupabaseService()
+
+            req_id = p.get("request_id", "")
+            updates = {
+                "status": p.get("status", "acknowledged"),
+                "admin_notes": p.get("admin_notes", ""),
+                "response_message": p.get("response_message", ""),
+                "responded_at": datetime.now(timezone.utc).isoformat(),
+                "handled_by_owner_id": self.owner_id,
+            }
+            result = db.client.table("platform_requests") \
+                .update(updates) \
+                .eq("id", req_id) \
+                .execute()
+            if not result.data:
+                return ToolResult("respond_to_request", False, error=f"Request {req_id} not found.")
+
+            req = result.data[0]
+            # Notify the requester
+            db.client.table("agent_messages").insert({
+                "from_owner_id": self.owner_id,
+                "to_owner_id": req["requester_id"],
+                "message_type": "response",
+                "subject": f"Update on your request: {req.get('title','')}",
+                "body": p.get("response_message", ""),
+                "payload": {"request_id": req_id, "new_status": p.get("status")},
+                "thread_id": req_id,
+            }).execute()
+
+            return ToolResult(
+                "respond_to_request", True,
+                data=f"Response sent to user. Request {req_id[:8]} status: {p.get('status')}."
+            )
+        except PermissionError as e:
+            return ToolResult("respond_to_request", False, error=str(e))
+        except Exception as e:
+            return ToolResult("respond_to_request", False, error=str(e))
+
+    def _create_code_task(self, p: dict[str, Any]) -> ToolResult:
+        """Create a code task for the VS Code / Claude Code agent to implement.
+
+        This is how Eduardo's Commander sends work to the code agent.
+        The code agent picks up the task, writes the code, and submits it
+        back for Eduardo's review and approval.
+
+        Params:
+          title (str) — short task name
+          description (str) — what needs to be built
+          task_type ('new_integration'|'new_feature'|'new_route'|'bug_fix'|'ui_change'|'other')
+          files_to_create (list of {path, description})
+          files_to_modify (list of {path, changes})
+          acceptance_criteria (list of str)
+          tech_context (str) — relevant architecture notes
+          priority ('low'|'normal'|'high'|'urgent')
+          source_request_id (str, optional) — which platform_request this fulfills
+        """
+        try:
+            self._assert_admin()
+            from app.database.connection import SupabaseService
+            db = SupabaseService()
+            spec = {
+                "files_to_create": p.get("files_to_create", []),
+                "files_to_modify": p.get("files_to_modify", []),
+                "acceptance_criteria": p.get("acceptance_criteria", []),
+                "tech_context": p.get("tech_context", ""),
+                "example_code": p.get("example_code", ""),
+                "env_vars_needed": p.get("env_vars_needed", []),
+                "dependencies": p.get("dependencies", []),
+            }
+            task_data = {
+                "owner_id": self.owner_id,
+                "title": p.get("title", "Untitled task"),
+                "description": p.get("description", ""),
+                "task_type": p.get("task_type", "new_feature"),
+                "spec": spec,
+                "priority": p.get("priority", "normal"),
+                "status": "pending",
+                "source_request_id": p.get("source_request_id"),
+                "target_branch": p.get("target_branch", "main"),
+            }
+            result = db.client.table("platform_tasks").insert(task_data).execute()
+            task_id = result.data[0]["id"] if result.data else "unknown"
+
+            if p.get("source_request_id"):
+                db.client.table("platform_requests") \
+                    .update({"status": "in_progress", "assigned_task_id": task_id}) \
+                    .eq("id", p["source_request_id"]) \
+                    .execute()
+
+            return ToolResult(
+                "create_code_task", True,
+                data=f"Code task created (ID: {task_id[:8]}): '{p.get('title')}'. "
+                     f"The code agent will pick it up from the queue, implement it, and submit for your review."
+            )
+        except PermissionError as e:
+            return ToolResult("create_code_task", False, error=str(e))
+        except Exception as e:
+            return ToolResult("create_code_task", False, error=str(e))
+
+    def _list_code_tasks(self, p: dict[str, Any]) -> ToolResult:
+        """List code tasks in the queue. Optionally filter by status.
+
+        Params: status (optional — 'pending'|'picked_up'|'needs_review'|'approved'|'deployed')
+        """
+        try:
+            self._assert_admin()
+            from app.database.connection import SupabaseService
+            db = SupabaseService()
+            q = db.client.table("platform_tasks") \
+                .select("id,title,task_type,status,priority,created_at")
+            if p.get("status"):
+                q = q.eq("status", p["status"])
+            rows = q.order("created_at", desc=True).limit(20).execute()
+            if not rows.data:
+                return ToolResult("list_code_tasks", True, data="No code tasks found.")
+            lines = [f"Code Task Queue ({len(rows.data)} tasks):"]
+            for t in rows.data:
+                lines.append(f"• [{t['status'].upper()}] [{t['id'][:8]}] {t['title']} ({t['task_type']}) [{t['priority']}]")
+            return ToolResult("list_code_tasks", True, data="\n".join(lines))
+        except PermissionError as e:
+            return ToolResult("list_code_tasks", False, error=str(e))
+        except Exception as e:
+            return ToolResult("list_code_tasks", False, error=str(e))
+
+    def _approve_code_task(self, p: dict[str, Any]) -> ToolResult:
+        """Approve a code task that the agent submitted for review.
+
+        Params: task_id (str), review_notes (str, optional)
+        """
+        try:
+            self._assert_admin()
+            from app.database.connection import SupabaseService
+            from datetime import datetime, timezone
+            import os
+            db = SupabaseService()
+
+            task_id = p.get("task_id", "")
+            review_notes = p.get("review_notes", "Approved by Commander.")
+
+            db.client.table("platform_tasks").update({
+                "status": "approved",
+                "review_notes": review_notes,
+                "reviewed_at": datetime.now(timezone.utc).isoformat(),
+            }).eq("id", task_id).execute()
+
+            # Fire deploy webhook
+            deploy_webhook = os.environ.get("RAILWAY_DEPLOY_WEBHOOK") or os.environ.get("DEPLOY_WEBHOOK_URL")
+            deploy_msg = ""
+            if deploy_webhook:
+                try:
+                    import urllib.request, json
+                    payload = json.dumps({"task_id": task_id, "approved_by": self.owner_id}).encode()
+                    req = urllib.request.Request(
+                        deploy_webhook, data=payload,
+                        headers={"Content-Type": "application/json"}, method="POST"
+                    )
+                    urllib.request.urlopen(req, timeout=10)
+                    deploy_msg = " Deploy webhook fired — changes going live."
+                except Exception as wh_err:
+                    deploy_msg = f" (Deploy webhook failed: {wh_err})"
+
+            return ToolResult(
+                "approve_code_task", True,
+                data=f"Task {task_id[:8]} approved.{deploy_msg}"
+            )
+        except PermissionError as e:
+            return ToolResult("approve_code_task", False, error=str(e))
+        except Exception as e:
+            return ToolResult("approve_code_task", False, error=str(e))
+
+    def _reject_code_task(self, p: dict[str, Any]) -> ToolResult:
+        """Reject a submitted code task and send it back for revision.
+
+        Params: task_id (str), review_notes (str) — must explain what to fix
+        """
+        try:
+            self._assert_admin()
+            from app.database.connection import SupabaseService
+            from datetime import datetime, timezone
+            db = SupabaseService()
+
+            task_id = p.get("task_id", "")
+            notes = p.get("review_notes", "Rejected — please revise.")
+
+            db.client.table("platform_tasks").update({
+                "status": "rejected",
+                "review_notes": notes,
+                "reviewed_at": datetime.now(timezone.utc).isoformat(),
+            }).eq("id", task_id).execute()
+
+            return ToolResult(
+                "reject_code_task", True,
+                data=f"Task {task_id[:8]} rejected. Reason: {notes}. The code agent will revise and resubmit."
+            )
+        except PermissionError as e:
+            return ToolResult("reject_code_task", False, error=str(e))
+        except Exception as e:
+            return ToolResult("reject_code_task", False, error=str(e))

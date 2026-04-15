@@ -33,6 +33,7 @@ from app.api.routes import (
     aria,
     auth_google,
     billing,
+    business_profile,
     channel_mappings,
     commander,
     commander_settings,
@@ -45,6 +46,8 @@ from app.api.routes import (
     optimization,
     orion,
     pipeline_monitor,
+    platform_requests,
+    platform_tasks,
     rex,
     sage,
     superadmin,
@@ -572,6 +575,9 @@ app.include_router(agent_identity.router)
 app.include_router(agents.router)
 app.include_router(access.router)
 app.include_router(channel_mappings.router)
+app.include_router(business_profile.router)
+app.include_router(platform_requests.router)
+app.include_router(platform_tasks.router)
 app.include_router(agent_settings.router)
 app.include_router(aria.router)
 app.include_router(auth_google.router)
