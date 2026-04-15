@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 from app.database.connection import DatabaseConnectionError, SupabaseService
@@ -96,6 +96,25 @@ def _safe_fetch(db: SupabaseService, table: str) -> list[dict[str, Any]]:
         return db.fetch_all(table)
     except DatabaseConnectionError:
         return []
+
+
+def _get_owner_id(request: Request) -> str:
+    """Extract owner_id from JWT token payload."""
+    payload = getattr(request.state, "token_payload", {})
+    owner_id = payload.get("sub") or payload.get("owner_id")
+    if not owner_id:
+        raise HTTPException(status_code=401, detail="Invalid token: missing owner_id")
+    return str(owner_id)
+
+
+def _filter_rows_for_owner(rows: list[dict[str, Any]], owner_id: str) -> list[dict[str, Any]]:
+    """Return only rows belonging to the authenticated owner when owner_id exists."""
+    filtered: list[dict[str, Any]] = []
+    for row in rows:
+        row_owner_id = row.get("owner_id")
+        if row_owner_id is None or str(row_owner_id) == owner_id:
+            filtered.append(row)
+    return filtered
 
 
 def _agent_brain(agent_slug: str):
@@ -483,14 +502,15 @@ def _build_notifications() -> dict[str, Any]:
 
 
 @router.get("/overview")
-def dashboard_overview() -> dict[str, Any]:
+def dashboard_overview(request: Request) -> dict[str, Any]:
     """Returns top-level command center data for the dashboard UI."""
     db = SupabaseService()
+    owner_id = _get_owner_id(request)
 
-    agents = _safe_fetch(db, "agents")
-    activity = _safe_fetch(db, "activity_log")
-    leads = _safe_fetch(db, "leads")
-    paper_trades = _safe_fetch(db, "paper_trades")
+    agents = _filter_rows_for_owner(_safe_fetch(db, "agents"), owner_id)
+    activity = _filter_rows_for_owner(_safe_fetch(db, "activity_log"), owner_id)
+    leads = _filter_rows_for_owner(_safe_fetch(db, "leads"), owner_id)
+    paper_trades = _filter_rows_for_owner(_safe_fetch(db, "paper_trades"), owner_id)
 
     now_date = datetime.now(timezone.utc).date()
 
@@ -583,13 +603,13 @@ def dashboard_overview() -> dict[str, Any]:
 
 
 @router.get("/data")
-def dashboard_data() -> dict[str, Any]:
+def dashboard_data(request: Request) -> dict[str, Any]:
     """Thin adapter that returns the shape the frontend DashboardData type expects.
 
     Maps from the richer ``/overview`` response to the flat structure
     used by orb-landing's ``fetchDashboardData()``.
     """
-    overview = dashboard_overview()
+    overview = dashboard_overview(request)
     agents_list = overview.get("agents") or []
     activity_feed = overview.get("activity_feed") or []
     approval_queue = overview.get("approval_queue") or []
@@ -630,10 +650,11 @@ def dashboard_data() -> dict[str, Any]:
 
 
 @router.get("/pipeline")
-def dashboard_pipeline() -> dict[str, Any]:
+def dashboard_pipeline(request: Request) -> dict[str, Any]:
     """Returns lead pipeline grouped by status for kanban-style UI."""
     db = SupabaseService()
-    leads = _safe_fetch(db, "leads")
+    owner_id = _get_owner_id(request)
+    leads = _filter_rows_for_owner(_safe_fetch(db, "leads"), owner_id)
 
     buckets: dict[str, list[dict[str, Any]]] = {
         "new": [],
@@ -655,31 +676,34 @@ def dashboard_pipeline() -> dict[str, Any]:
 
 
 @router.get("/approvals")
-def dashboard_approvals() -> dict[str, Any]:
+def dashboard_approvals(request: Request) -> dict[str, Any]:
     """Returns pending approvals ordered newest first."""
     db = SupabaseService()
-    activity = _safe_fetch(db, "activity_log")
+    owner_id = _get_owner_id(request)
+    activity = _filter_rows_for_owner(_safe_fetch(db, "activity_log"), owner_id)
     approvals = [row for row in activity if row.get("needs_approval") is True]
     approvals.sort(key=lambda row: str(row.get("created_at") or ""), reverse=True)
     return {"approvals": approvals, "count": len(approvals)}
 
 
 @router.get("/activity-log")
-def dashboard_activity_log() -> list[dict[str, Any]]:
+def dashboard_activity_log(request: Request) -> list[dict[str, Any]]:
     """Returns the recent activity log ordered newest first."""
     db = SupabaseService()
-    activity = _safe_fetch(db, "activity_log")
+    owner_id = _get_owner_id(request)
+    activity = _filter_rows_for_owner(_safe_fetch(db, "activity_log"), owner_id)
     activity.sort(key=lambda row: str(row.get("created_at") or ""), reverse=True)
     return activity[:100]
 
 
 @router.post("/approve/{activity_id}")
-def dashboard_approve(activity_id: str) -> dict[str, Any]:
+def dashboard_approve(activity_id: str, request: Request) -> dict[str, Any]:
     """Approves a pending activity item."""
     db = SupabaseService()
+    owner_id = _get_owner_id(request)
     rows = db.update_many(
         "activity_log",
-        {"id": activity_id},
+        {"id": activity_id, "owner_id": owner_id},
         {
             "approved": True,
             "needs_approval": False,
@@ -693,12 +717,13 @@ def dashboard_approve(activity_id: str) -> dict[str, Any]:
 
 
 @router.post("/reject/{activity_id}")
-def dashboard_reject(activity_id: str, payload: RejectPayload) -> dict[str, Any]:
+def dashboard_reject(activity_id: str, payload: RejectPayload, request: Request) -> dict[str, Any]:
     """Rejects a pending activity item with a reason."""
     db = SupabaseService()
+    owner_id = _get_owner_id(request)
     rows = db.update_many(
         "activity_log",
-        {"id": activity_id},
+        {"id": activity_id, "owner_id": owner_id},
         {
             "approved": False,
             "needs_approval": False,

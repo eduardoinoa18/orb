@@ -168,6 +168,31 @@ def submit_pipeline_monitor_proposal(
     try:
         owner_id = _get_owner_id(request)
         db = SupabaseService()
+
+        existing_rows = db.fetch_all("activity_log", {"owner_id": owner_id})
+        existing_pending = next(
+            (
+                row for row in existing_rows
+                if row.get("needs_approval") is True
+                and str(row.get("action_type") or "") == "feature_proposal"
+                and isinstance(row.get("metadata"), dict)
+                and row.get("metadata", {}).get("proposal_type") == "pipeline_monitor"
+            ),
+            None,
+        )
+        if existing_pending:
+            return {
+                "proposal_id": existing_pending.get("id"),
+                "status": "pending_approval",
+                "owner_id": owner_id,
+                "title": str(existing_pending.get("metadata", {}).get("title") or payload.title),
+                "submitted_at": str(existing_pending.get("created_at") or datetime.now(timezone.utc).isoformat()),
+                "next_steps": [
+                    "Review the existing proposal on your Approval Tab",
+                    "Approve to enable Pipeline Monitor features",
+                    "Reject it first if you want to resubmit a revised version",
+                ],
+            }
         
         # Create activity_log entry as approval request
         proposal_row = db.insert_one(
