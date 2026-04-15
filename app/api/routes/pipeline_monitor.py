@@ -75,6 +75,34 @@ def _get_owner_id(request: Request) -> str:
     return str(owner_id)
 
 
+def _pipeline_monitor_state(db: SupabaseService, owner_id: str) -> dict[str, Any]:
+    """Return enablement and pending proposal state for Pipeline Monitor."""
+    commander_rows = db.fetch_all("commander_config", {"owner_id": owner_id})
+    commander_row = commander_rows[0] if commander_rows else {}
+    channel_preferences = commander_row.get("channel_preferences")
+    if not isinstance(channel_preferences, dict):
+        channel_preferences = {}
+
+    activity_rows = db.fetch_all("activity_log", {"owner_id": owner_id})
+    pending = next(
+        (
+            row for row in activity_rows
+            if row.get("needs_approval") is True
+            and str(row.get("action_type") or "") == "feature_proposal"
+            and isinstance(row.get("metadata"), dict)
+            and row.get("metadata", {}).get("proposal_type") == "pipeline_monitor"
+        ),
+        None,
+    )
+
+    return {
+        "enabled": bool(channel_preferences.get("pipeline_monitor")),
+        "pending_proposal": pending is not None,
+        "proposal_id": pending.get("id") if pending else None,
+        "channel_preferences": channel_preferences,
+    }
+
+
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
@@ -83,6 +111,21 @@ def _get_owner_id(request: Request) -> str:
 def pipeline_monitor_status() -> dict[str, str]:
     """Health check for Pipeline Monitor routes."""
     return {"status": "pipeline monitor router ready"}
+
+
+@router.get("/config")
+def pipeline_monitor_config(request: Request) -> dict[str, Any]:
+    """Return owner-specific feature status for Pipeline Monitor."""
+    owner_id = _get_owner_id(request)
+    try:
+        db = SupabaseService()
+        state = _pipeline_monitor_state(db, owner_id)
+        return {
+            "owner_id": owner_id,
+            **state,
+        }
+    except DatabaseConnectionError as e:
+        raise HTTPException(status_code=503, detail="Database unavailable") from e
 
 
 @router.get("/view")
@@ -168,6 +211,20 @@ def submit_pipeline_monitor_proposal(
     try:
         owner_id = _get_owner_id(request)
         db = SupabaseService()
+
+        current_state = _pipeline_monitor_state(db, owner_id)
+        if current_state.get("enabled"):
+            return {
+                "proposal_id": current_state.get("proposal_id"),
+                "status": "enabled",
+                "owner_id": owner_id,
+                "title": payload.title,
+                "submitted_at": datetime.now(timezone.utc).isoformat(),
+                "next_steps": [
+                    "Pipeline Monitor is already enabled for this owner",
+                    "Open the dedicated pipeline dashboard to review CRM visibility",
+                ],
+            }
 
         existing_rows = db.fetch_all("activity_log", {"owner_id": owner_id})
         existing_pending = next(

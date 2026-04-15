@@ -117,6 +117,47 @@ def _filter_rows_for_owner(rows: list[dict[str, Any]], owner_id: str) -> list[di
     return filtered
 
 
+def _load_commander_row(db: SupabaseService, owner_id: str) -> dict[str, Any]:
+    """Load or create a commander_config row for the owner."""
+    rows = _filter_rows_for_owner(_safe_fetch(db, "commander_config"), owner_id)
+    if rows:
+        return rows[0]
+    return db.insert_one(
+        "commander_config",
+        {
+            "owner_id": owner_id,
+            "commander_name": "Max",
+            "personality_style": "professional",
+            "communication_style": "concise",
+            "proactivity_level": 7,
+            "morning_briefing_enabled": True,
+            "briefing_time": "07:00",
+            "weekly_review_enabled": True,
+            "review_day": "sunday",
+            "language": "en",
+            "safe_mode": False,
+            "autonomy_level": 5,
+            "channel_preferences": {},
+            "approval_rules": {},
+        },
+    )
+
+
+def _set_pipeline_monitor_enabled(db: SupabaseService, owner_id: str, enabled: bool) -> dict[str, Any]:
+    """Persist the owner's pipeline monitor toggle in commander_config."""
+    row = _load_commander_row(db, owner_id)
+    channel_preferences = row.get("channel_preferences")
+    if not isinstance(channel_preferences, dict):
+        channel_preferences = {}
+    channel_preferences["pipeline_monitor"] = enabled
+    db.update_many(
+        "commander_config",
+        {"owner_id": owner_id},
+        {"channel_preferences": channel_preferences},
+    )
+    return channel_preferences
+
+
 def _agent_brain(agent_slug: str):
     brain_cls = _AGENT_BRAINS.get((agent_slug or "").strip().lower())
     if not brain_cls:
@@ -456,12 +497,12 @@ def _update_fallback_improvement(improvement_id: str, status: str, note: str | N
     return None
 
 
-def _build_notifications() -> dict[str, Any]:
+def _build_notifications(request: Request) -> dict[str, Any]:
     """Builds a notification feed for the top-bar drawer."""
     integration_rows = _integration_snapshot().get("integrations", [])
     warning_integrations = [row for row in integration_rows if row.get("status") == "warning"]
     improvements = [row for row in _load_improvements() if str(row.get("status") or "") == "proposed"]
-    approvals = dashboard_approvals().get("approvals", [])[:5]
+    approvals = dashboard_approvals(request).get("approvals", [])[:5]
 
     notifications: list[dict[str, Any]] = []
     if warning_integrations:
@@ -701,19 +742,40 @@ def dashboard_approve(activity_id: str, request: Request) -> dict[str, Any]:
     """Approves a pending activity item."""
     db = SupabaseService()
     owner_id = _get_owner_id(request)
+    current_rows = _filter_rows_for_owner(_safe_fetch(db, "activity_log"), owner_id)
+    current = next((row for row in current_rows if str(row.get("id") or "") == activity_id), None)
+    if not current:
+        raise HTTPException(status_code=404, detail="Approval item not found.")
+
+    outcome = "approved"
+    metadata = current.get("metadata") if isinstance(current.get("metadata"), dict) else {}
+    if (
+        str(current.get("action_type") or "") == "feature_proposal"
+        and metadata.get("proposal_type") == "pipeline_monitor"
+    ):
+        channel_preferences = _set_pipeline_monitor_enabled(db, owner_id, True)
+        metadata = {
+            **metadata,
+            "activation_status": "enabled",
+            "activated_at": datetime.now(timezone.utc).isoformat(),
+            "channel_preferences": channel_preferences,
+        }
+        outcome = "approved: pipeline monitor enabled"
+
     rows = db.update_many(
         "activity_log",
         {"id": activity_id, "owner_id": owner_id},
         {
             "approved": True,
             "needs_approval": False,
-            "outcome": "approved",
+            "outcome": outcome,
             "approved_at": datetime.now(timezone.utc).isoformat(),
+            "metadata": metadata,
         },
     )
     if not rows:
         raise HTTPException(status_code=404, detail="Approval item not found.")
-    return {"status": "approved", "activity_id": activity_id}
+    return {"status": "approved", "activity_id": activity_id, "outcome": outcome}
 
 
 @router.post("/reject/{activity_id}")
@@ -810,9 +872,9 @@ def dashboard_improvement_reject(improvement_id: str, payload: RejectPayload) ->
 
 
 @router.get("/notifications")
-def dashboard_notifications() -> dict[str, Any]:
+def dashboard_notifications(request: Request) -> dict[str, Any]:
     """Returns the current dashboard notification drawer payload."""
-    return _build_notifications()
+    return _build_notifications(request)
 
 
 @router.get("/agent-learning/{agent_slug}/{owner_id}")
