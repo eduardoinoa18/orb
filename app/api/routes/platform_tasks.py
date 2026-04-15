@@ -184,7 +184,13 @@ async def list_tasks(
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Failed to list platform tasks, serving empty fallback: {e}")
+        return {
+            "tasks": [],
+            "total": 0,
+            "status": "fallback",
+            "message": "Platform tasks unavailable or not migrated yet",
+        }
 
 
 @router.get("/queue")
@@ -240,7 +246,14 @@ async def task_stats(request: Request):
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Failed to load platform task stats, serving empty fallback: {e}")
+        return {
+            "total": 0,
+            "by_status": {},
+            "by_type": {},
+            "status": "fallback",
+            "message": "Platform task stats unavailable or not migrated yet",
+        }
 
 
 @router.get("/{task_id}")

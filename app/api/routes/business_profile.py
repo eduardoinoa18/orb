@@ -328,8 +328,14 @@ async def get_memory_file(request: Request):
             }
         return {"owner_id": owner_id, "content": "", "updated_at": None}
     except Exception as e:
-        logger.error(f"Failed to get commander memory file: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        # Keep Commander usable even if profile tables are not ready yet.
+        logger.error(f"Failed to get commander memory file, serving empty fallback: {e}")
+        return {
+            "owner_id": owner_id,
+            "content": "",
+            "updated_at": None,
+            "status": "fallback",
+        }
 
 
 @router.put("/memory-file")
