@@ -79,6 +79,9 @@ class Permission(str, Enum):
     WEB_SEARCH = "web_search"
     SEND_WEBHOOK = "send_webhook"
 
+    # Dashboard customization permissions
+    CUSTOMIZE_DASHBOARD = "customize_dashboard"
+
 
 # Default permissions per agent slug
 AGENT_DEFAULT_PERMISSIONS: dict[str, set[Permission]] = {
@@ -107,6 +110,7 @@ AGENT_DEFAULT_PERMISSIONS: dict[str, set[Permission]] = {
         Permission.READ_ACTIVITY_LOG,
         Permission.ACCESS_OWNER_DATA,
         Permission.WEB_SEARCH,
+        Permission.CUSTOMIZE_DASHBOARD,
     },
     "rex": {
         Permission.READ_CONTACTS,

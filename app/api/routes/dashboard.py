@@ -143,6 +143,36 @@ def _load_commander_row(db: SupabaseService, owner_id: str) -> dict[str, Any]:
     )
 
 
+def _ensure_pipeline_tab_in_dashboard(db: SupabaseService, owner_id: str) -> None:
+    """Add a Pipeline Monitor tab to the owner's dashboard_configs if not already present."""
+    try:
+        rows = db.fetch_all("dashboard_configs", {"owner_id": owner_id})
+        if rows and rows[0].get("config"):
+            raw = rows[0]["config"]
+            if isinstance(raw, str):
+                import json as _json
+                raw = _json.loads(raw)
+            tabs: list[dict[str, Any]] = raw.get("tabs", [])
+            existing_ids = {t.get("id") for t in tabs}
+            if "pipeline" not in existing_ids:
+                import json as _json
+                pipeline_tab = {
+                    "id": "pipeline",
+                    "label": "Pipeline",
+                    "icon": "radar",
+                    "position": len(tabs),
+                    "visible": True,
+                    "widgets": [
+                        {"id": "w-pipeline-metrics", "type": "crm", "title": "Pipeline Metrics", "size": "full", "position": 0, "visible": True, "config": {"source": "followupboss", "view": "pipeline_monitor"}},
+                    ],
+                }
+                tabs.append(pipeline_tab)
+                raw["tabs"] = tabs
+                db.update_many("dashboard_configs", {"owner_id": owner_id}, {"config": _json.dumps(raw)})
+    except Exception as exc:
+        logger.warning("Could not add pipeline tab for owner %s: %s", owner_id, exc)
+
+
 def _set_pipeline_monitor_enabled(db: SupabaseService, owner_id: str, enabled: bool) -> dict[str, Any]:
     """Persist the owner's pipeline monitor toggle in commander_config."""
     row = _load_commander_row(db, owner_id)
@@ -155,6 +185,8 @@ def _set_pipeline_monitor_enabled(db: SupabaseService, owner_id: str, enabled: b
         {"owner_id": owner_id},
         {"channel_preferences": channel_preferences},
     )
+    if enabled:
+        _ensure_pipeline_tab_in_dashboard(db, owner_id)
     return channel_preferences
 
 

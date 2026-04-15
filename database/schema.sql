@@ -263,6 +263,10 @@ CREATE TABLE IF NOT EXISTS commander_config (
   weekly_review_enabled BOOLEAN DEFAULT true,
   review_day TEXT DEFAULT 'sunday',
   language TEXT DEFAULT 'en',
+  safe_mode BOOLEAN DEFAULT false,
+  autonomy_level INTEGER DEFAULT 5,
+  channel_preferences JSONB DEFAULT '{}',
+  approval_rules JSONB DEFAULT '{}',
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
@@ -317,6 +321,10 @@ ALTER TABLE IF EXISTS tasks ADD COLUMN IF NOT EXISTS owner_id UUID;
 ALTER TABLE IF EXISTS content ADD COLUMN IF NOT EXISTS owner_id UUID;
 ALTER TABLE IF EXISTS daily_costs ADD COLUMN IF NOT EXISTS owner_id UUID;
 ALTER TABLE IF EXISTS commander_config ADD COLUMN IF NOT EXISTS owner_id UUID;
+ALTER TABLE IF EXISTS commander_config ADD COLUMN IF NOT EXISTS safe_mode BOOLEAN DEFAULT false;
+ALTER TABLE IF EXISTS commander_config ADD COLUMN IF NOT EXISTS autonomy_level INTEGER DEFAULT 5;
+ALTER TABLE IF EXISTS commander_config ADD COLUMN IF NOT EXISTS channel_preferences JSONB DEFAULT '{}';
+ALTER TABLE IF EXISTS commander_config ADD COLUMN IF NOT EXISTS approval_rules JSONB DEFAULT '{}';
 ALTER TABLE IF EXISTS chat_sessions ADD COLUMN IF NOT EXISTS owner_id UUID;
 
 -- ============================================
