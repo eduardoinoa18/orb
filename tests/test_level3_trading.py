@@ -10,7 +10,7 @@ from agents.trading.strategy_loader import list_strategies, load_strategy
 from app.api.main import app
 from integrations.tradingview_webhook import parse_tradingview_payload
 
-client = TestClient(app)
+client = TestClient(app, headers={"Authorization": "Bearer orb-test-token"})
 
 
 def test_load_strategy_returns_es_momentum() -> None:

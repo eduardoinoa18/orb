@@ -9,7 +9,7 @@ from app.api.main import app
 from app.database.connection import DatabaseConnectionError
 from config.settings import get_settings
 
-client = TestClient(app)
+client = TestClient(app, headers={"Authorization": "Bearer orb-test-token"})
 
 
 def _auth_headers() -> dict[str, str]:
@@ -84,7 +84,9 @@ def test_dashboard_approvals_filters_pending_items() -> None:
 
 def test_dashboard_approve_returns_approved_status() -> None:
     """Approve endpoint should mark item approved."""
-    with patch("app.api.routes.dashboard.SupabaseService") as mock_db:
+    with patch("app.api.routes.dashboard._safe_fetch") as mock_fetch, \
+         patch("app.api.routes.dashboard.SupabaseService") as mock_db:
+        mock_fetch.return_value = [{"id": "act-1", "owner_id": "00000000-0000-0000-0000-000000000001", "action_type": "call", "metadata": {}}]
         mock_db.return_value.update_many.return_value = [{"id": "act-1"}]
         response = client.post("/dashboard/approve/act-1", headers=_auth_headers())
 

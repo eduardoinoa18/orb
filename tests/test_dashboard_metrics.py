@@ -6,7 +6,7 @@ from fastapi.testclient import TestClient
 
 from app.api.main import DatabaseConnectionError, _build_dashboard_metrics, app
 
-client = TestClient(app)
+client = TestClient(app, headers={"Authorization": "Bearer orb-test-token"})
 
 
 
