@@ -44,6 +44,7 @@ from app.api.routes import (
     onboarding,
     optimization,
     orion,
+    pipeline_monitor,
     rex,
     sage,
     superadmin,
@@ -586,6 +587,7 @@ app.include_router(setup.router)
 app.include_router(dashboard.router)
 app.include_router(optimization.router)
 app.include_router(orion.router)
+app.include_router(pipeline_monitor.router)
 app.include_router(rex.router)
 app.include_router(sage.router)
 app.include_router(computer_use.router)

@@ -330,12 +330,38 @@ class CommanderBrain:
         leads = self._fetch_rows("leads", {"owner_id": owner_id})
         hot = [row for row in leads if int(row.get("temperature") or 0) >= 8]
         qualified = [row for row in leads if str(row.get("status") or "").lower() in {"qualified", "appointment", "offer"}]
-        return {
+        summary = {
             "total": len(leads),
             "hot": len(hot),
             "qualified": len(qualified),
             "next_hot_lead": hot[0] if hot else None,
         }
+        try:
+            from agents.nova.pipeline_monitor import get_enhanced_pipeline_view
+
+            enhanced = get_enhanced_pipeline_view(owner_id)
+            counts = enhanced.get("counts") or {}
+            sources = enhanced.get("sources") or {}
+            engagement = enhanced.get("engagement") or {}
+            deals = enhanced.get("deals") or {}
+            summary.update(
+                {
+                    "total": int(counts.get("total") or summary["total"]),
+                    "hot": int(counts.get("hot") or summary["hot"]),
+                    "qualified": int(counts.get("qualified") or summary["qualified"]),
+                    "unassigned": int(counts.get("unassigned") or 0),
+                    "dormant_7d": int(counts.get("dormant_7d") or 0),
+                    "lead_sources": sources,
+                    "top_source": next(iter(sources), None),
+                    "avg_days_since_contact": float(engagement.get("avg_days_since_contact") or 0),
+                    "needs_attention": int(engagement.get("needs_attention") or 0),
+                    "deal_value": float(deals.get("total_value") or 0),
+                    "next_hot_lead": enhanced.get("next_hot_lead") or summary["next_hot_lead"],
+                }
+            )
+        except Exception:
+            pass
+        return summary
 
     def _get_calendar_summary(self, owner_id: str) -> dict[str, Any]:
         tasks = self._fetch_rows("tasks", {"owner_id": owner_id})
@@ -483,6 +509,7 @@ class CommanderBrain:
 
         return (
             f"Pipeline: {pipeline.get('total', 0)} leads, {pipeline.get('hot', 0)} hot, {pipeline.get('qualified', 0)} qualified.\n"
+            f"Pipeline watch: {pipeline.get('unassigned', 0)} unassigned, {pipeline.get('dormant_7d', 0)} dormant, top source {pipeline.get('top_source') or 'unknown'}.\n"
             f"Calendar: {calendar.get('meetings_today', 0)} meetings today.\n"
             f"Approvals pending: {approvals.get('count', 0)}.\n"
             f"AI cost today: ${float(costs.get('cost_dollars') or 0):.2f}.\n"
@@ -718,6 +745,7 @@ class CommanderBrain:
             f"Good morning, {owner_name}.",
             "Here is what I see for today:",
             f"Your pipeline has {pipeline.get('hot', 0)} hot leads and {pipeline.get('qualified', 0)} qualified opportunities.",
+            f"CRM watchlist: {pipeline.get('unassigned', 0)} unassigned leads, {pipeline.get('dormant_7d', 0)} dormant leads, top source {pipeline.get('top_source') or 'unknown'}.",
             f"Your calendar has {calendar.get('meetings_today', 0)} meeting(s) today.",
             f"Approvals waiting: {approvals.get('count', 0)}.",
             f"AI spend today: ${float(cost.get('cost_dollars') or 0):.2f}.",
