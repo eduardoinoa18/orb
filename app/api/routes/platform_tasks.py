@@ -68,6 +68,22 @@ def _require_admin(owner_id: str, db: SupabaseService) -> None:
             return
     except Exception:
         pass
+
+    # Fallback: allow platform owner role/superadmin from owners table.
+    try:
+        owner_rows = db.client.table("owners") \
+            .select("role,is_superadmin") \
+            .eq("id", owner_id) \
+            .limit(1) \
+            .execute()
+        if owner_rows.data:
+            row = owner_rows.data[0]
+            role = str(row.get("role") or "").lower()
+            if bool(row.get("is_superadmin")) or role in {"superadmin", "admin"}:
+                return
+    except Exception:
+        pass
+
     raise HTTPException(status_code=403, detail="Platform admin access required")
 
 

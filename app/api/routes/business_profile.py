@@ -302,15 +302,28 @@ async def get_memory_file(request: Request):
     try:
         db = SupabaseService()
         rows = db.client.table("business_profiles") \
-            .select("owner_id, commander_memory_file, updated_at") \
+            .select("*") \
             .eq("owner_id", owner_id) \
             .limit(1) \
             .execute()
         if rows.data:
             row = rows.data[0]
+            content = str(row.get("commander_memory_file") or "")
+            if not content:
+                # Fallback for pre-migration DBs: reuse commander_config.persona.
+                cfg_rows = db.client.table("commander_config") \
+                    .select("persona,updated_at") \
+                    .eq("owner_id", owner_id) \
+                    .limit(1) \
+                    .execute()
+                if cfg_rows.data:
+                    cfg = cfg_rows.data[0]
+                    content = str(cfg.get("persona") or "")
+                    if cfg.get("updated_at"):
+                        row["updated_at"] = cfg.get("updated_at")
             return {
                 "owner_id": owner_id,
-                "content": str(row.get("commander_memory_file") or ""),
+                "content": content,
                 "updated_at": row.get("updated_at"),
             }
         return {"owner_id": owner_id, "content": "", "updated_at": None}
@@ -329,13 +342,31 @@ async def put_memory_file(request: Request, body: MemoryFileUpdate):
             "owner_id": owner_id,
             "commander_memory_file": body.content,
         }
-        result = db.client.table("business_profiles") \
-            .upsert(data, on_conflict="owner_id") \
-            .execute()
-        row = result.data[0] if result.data else data
+        try:
+            result = db.client.table("business_profiles") \
+                .upsert(data, on_conflict="owner_id") \
+                .execute()
+            row = result.data[0] if result.data else data
+        except Exception:
+            # Fallback for pre-migration DBs: store in commander_config.persona.
+            cfg = db.client.table("commander_config") \
+                .select("owner_id") \
+                .eq("owner_id", owner_id) \
+                .limit(1) \
+                .execute()
+            if cfg.data:
+                result = db.client.table("commander_config") \
+                    .update({"persona": body.content}) \
+                    .eq("owner_id", owner_id) \
+                    .execute()
+            else:
+                result = db.client.table("commander_config") \
+                    .insert({"owner_id": owner_id, "persona": body.content}) \
+                    .execute()
+            row = result.data[0] if result.data else {"persona": body.content}
         return {
             "owner_id": owner_id,
-            "content": str(row.get("commander_memory_file") or body.content),
+            "content": str(row.get("commander_memory_file") or row.get("persona") or body.content),
             "updated_at": row.get("updated_at"),
             "status": "saved",
         }

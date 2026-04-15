@@ -803,17 +803,26 @@ def dashboard_approve(activity_id: str, request: Request) -> dict[str, Any]:
             }
             outcome = "approved: pipeline monitor activation failed"
 
-    rows = db.update_many(
-        "activity_log",
-        {"id": activity_id, "owner_id": owner_id},
-        {
-            "approved": True,
-            "needs_approval": False,
-            "outcome": outcome,
-            "approved_at": datetime.now(timezone.utc).isoformat(),
-            "metadata": metadata,
-        },
-    )
+    update_payload = {
+        "approved": True,
+        "needs_approval": False,
+        "outcome": outcome,
+        "approved_at": datetime.now(timezone.utc).isoformat(),
+        "metadata": metadata,
+    }
+    try:
+        rows = db.update_many(
+            "activity_log",
+            {"id": activity_id, "owner_id": owner_id},
+            update_payload,
+        )
+    except Exception:
+        # Pre-migration fallback: retry without metadata column update.
+        rows = db.update_many(
+            "activity_log",
+            {"id": activity_id, "owner_id": owner_id},
+            {k: v for k, v in update_payload.items() if k != "metadata"},
+        )
     if not rows:
         raise HTTPException(status_code=404, detail="Approval item not found.")
     return {"status": "approved", "activity_id": activity_id, "outcome": outcome}
