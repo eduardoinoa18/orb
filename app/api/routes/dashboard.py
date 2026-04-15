@@ -785,14 +785,23 @@ def dashboard_approve(activity_id: str, request: Request) -> dict[str, Any]:
         str(current.get("action_type") or "") == "feature_proposal"
         and metadata.get("proposal_type") == "pipeline_monitor"
     ):
-        channel_preferences = _set_pipeline_monitor_enabled(db, owner_id, True)
-        metadata = {
-            **metadata,
-            "activation_status": "enabled",
-            "activated_at": datetime.now(timezone.utc).isoformat(),
-            "channel_preferences": channel_preferences,
-        }
-        outcome = "approved: pipeline monitor enabled"
+        try:
+            channel_preferences = _set_pipeline_monitor_enabled(db, owner_id, True)
+            metadata = {
+                **metadata,
+                "activation_status": "enabled",
+                "activated_at": datetime.now(timezone.utc).isoformat(),
+                "channel_preferences": channel_preferences,
+            }
+            outcome = "approved: pipeline monitor enabled"
+        except Exception as exc:
+            logger.exception("Pipeline monitor activation failed for owner %s", owner_id)
+            metadata = {
+                **metadata,
+                "activation_status": "activation_failed",
+                "activation_error": str(exc)[:300],
+            }
+            outcome = "approved: pipeline monitor activation failed"
 
     rows = db.update_many(
         "activity_log",
