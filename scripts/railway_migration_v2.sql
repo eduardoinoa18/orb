@@ -109,6 +109,26 @@ create table if not exists platform_settings (
 );
 
 -- ── 8. Ensure columns exist (handles tables created by an older schema) ──────
+-- If an older schema used `integration_key`, rename it to `provider_slug`.
+do $$
+begin
+    if exists (
+        select 1
+        from information_schema.columns
+        where table_schema = 'public'
+          and table_name = 'owner_integrations'
+          and column_name = 'integration_key'
+    ) and not exists (
+        select 1
+        from information_schema.columns
+        where table_schema = 'public'
+          and table_name = 'owner_integrations'
+          and column_name = 'provider_slug'
+    ) then
+        alter table owner_integrations rename column integration_key to provider_slug;
+    end if;
+end $$;
+
 alter table owner_integrations       add column if not exists provider_slug text not null default '';
 alter table integration_credentials  add column if not exists provider_slug text not null default '';
 alter table integration_credentials  add column if not exists field_name    text not null default '';

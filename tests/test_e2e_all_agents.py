@@ -9,7 +9,11 @@ from fastapi.testclient import TestClient
 
 from app.api.main import app
 
-client = TestClient(app, raise_server_exceptions=False)
+client = TestClient(
+    app,
+    raise_server_exceptions=False,
+    headers={"Authorization": "Bearer orb-test-token"},
+)
 
 
 def test_all_agents_e2e_smoke_flow() -> None:

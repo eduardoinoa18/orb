@@ -55,16 +55,18 @@ def test_monitor_platform_health_flags_unhealthy_dependencies() -> None:
 
 
 def test_check_dependency_health_reports_config_errors() -> None:
-    """Dependency health marks integrations unhealthy when required calls raise."""
+    """Dependency health marks integrations unhealthy when config checks fail."""
     monitor = PlatformMonitor()
 
     with patch.object(monitor.db, "fetch_all", side_effect=RuntimeError("db down")):
-        with patch("agents.sage.platform_monitor.ask_claude_smart", side_effect=RuntimeError("anthropic down")):
-            with patch("agents.sage.platform_monitor.ask_gpt_mini", side_effect=RuntimeError("openai down")):
-                mock_settings = MagicMock()
-                mock_settings.require.side_effect = RuntimeError("missing twilio key")
-                with patch("agents.sage.platform_monitor.get_settings", return_value=mock_settings):
-                    result = monitor._check_dependency_health()
+        mock_settings = MagicMock()
+        mock_settings.anthropic_api_key = ""
+        mock_settings.openai_api_key = ""
+        mock_settings.twilio_account_sid = ""
+        mock_settings.twilio_auth_token = ""
+        mock_settings.twilio_phone_number = ""
+        with patch("agents.sage.platform_monitor.get_settings", return_value=mock_settings):
+            result = monitor._check_dependency_health()
 
     assert result["supabase"]["status"] == "unhealthy"
     assert result["anthropic"]["status"] == "unhealthy"

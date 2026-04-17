@@ -126,6 +126,7 @@ class SupabaseService:
         cost_cents: int = 0,
         outcome: str | None = None,
         needs_approval: bool = False,
+        request_id: str | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Writes an activity_log row directly through the shared database helper."""
@@ -142,6 +143,8 @@ class SupabaseService:
             payload["owner_id"] = resolved_owner_id
         if outcome is not None:
             payload["outcome"] = outcome
+        if request_id is not None:
+            payload["request_id"] = request_id
         if metadata is not None:
             payload["metadata"] = metadata
 
@@ -163,7 +166,7 @@ class SupabaseService:
                 return {**payload, "id": None}
             else:
                 logger.warning("Failed to log activity to database: %s", error)
-                return {**payload, "id": None}
+                raise
         else:
             dispatch_agent_action(
                 agent_id=str(payload.get("agent_id") or "system"),

@@ -71,13 +71,11 @@ def provision_agent(
     payload = {
         "owner_id": owner_id,
         "name": agent_name,
-        "role": role,
+        "agent_type": role,
         "phone_number": selected_number["phone_number"],
         "email_address": email_identity["email_address"],
-        "brain_provider": brain_provider,
-        "brain_api_key": brain_api_key,
-        "status": "active",
-        "trust_score": 0,
+        "api_key": brain_api_key,
+        "is_active": True,
         "updated_at": datetime.now(timezone.utc).isoformat(),
     }
     agent = db.insert_one("agents", payload)
@@ -113,7 +111,7 @@ def provision_agent(
         "phone": selected_number["phone_number"],
         "email": email_identity["email_address"],
         "role": role,
-        "status": agent.get("status", "active"),
+        "status": "active" if agent.get("is_active", True) else "inactive",
         "business_address": business_address,
         "provisioned_at": str(agent.get("created_at") or datetime.now(timezone.utc).isoformat()),
         "number_source": selected_number.get("source"),

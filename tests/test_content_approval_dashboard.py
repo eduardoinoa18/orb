@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 from fastapi.testclient import TestClient
 from app.api.main import app
 
-client = TestClient(app)
+client = TestClient(app, headers={"Authorization": "Bearer orb-test-token"})
 
 
 def test_list_pending_content_returns_drafts():

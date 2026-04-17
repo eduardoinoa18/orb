@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 from app.api.main import app
 
 
-client = TestClient(app)
+client = TestClient(app, headers={"Authorization": "Bearer orb-test-token"})
 
 
 def test_docs_csp_is_self_hosted_only() -> None:

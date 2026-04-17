@@ -44,7 +44,6 @@ def log_activity(
     """
     try:
         db = SupabaseService()
-        metadata: dict[str, Any] | None = {"request_id": request_id} if request_id else None
         row = db.log_activity(
             agent_id=agent_id,
             owner_id=owner_id,
@@ -53,7 +52,7 @@ def log_activity(
             cost_cents=cost_cents,
             outcome=outcome,
             needs_approval=needs_approval,
-            metadata=metadata,
+            request_id=request_id,
         )
         return row
     except DatabaseConnectionError as error:

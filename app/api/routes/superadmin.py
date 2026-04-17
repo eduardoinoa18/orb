@@ -7,7 +7,7 @@ from typing import Any
 
 import stripe
 from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel, Field
 
 from app.api.middleware.superadmin import require_superadmin
@@ -57,7 +57,7 @@ def _safe_int(value: Any) -> int:
         return 0
 
 
-@router.get("/", response_class=HTMLResponse)
+@router.get("/")
 def admin_home(request: Request, owner: dict[str, Any] = Depends(require_superadmin)) -> Any:
     if "text/html" in (request.headers.get("accept") or ""):
         summary = {
@@ -65,12 +65,14 @@ def admin_home(request: Request, owner: dict[str, Any] = Depends(require_superad
             "role": owner.get("role") or "superadmin",
         }
         return render_admin_dashboard(summary)
-    return {
-        "status": "ok",
-        "message": "Super admin working.",
-        "owner_email": owner.get("email"),
-        "generated_at": datetime.now(timezone.utc).isoformat(),
-    }
+    return JSONResponse(
+        content={
+            "status": "ok",
+            "message": "Super admin working.",
+            "owner_email": owner.get("email"),
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+        }
+    )
 
 
 @router.get("/users")

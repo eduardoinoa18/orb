@@ -59,6 +59,8 @@ from app.api.routes import (
 from app.api.routes import atlas
 from app.api.routes import integrations
 from app.api.routes import setup
+from app.api.routes import code_agent_protocol
+from app.api.routes import platform_scan as platform_scan_routes
 from app.database.connection import DatabaseConnectionError, SupabaseService
 from app.ui_shell import render_dashboard, render_home, render_login
 from app.runtime.preflight import build_preflight_report
@@ -128,6 +130,14 @@ async def lifespan(app: FastAPI):
     else:
         app.state.sage_monitor_scheduler = None
         logger.info("Sage monitor scheduler disabled for lean launch")
+
+    # Start platform soft-check scanner (every 15 min)
+    try:
+        from agents.platform_scan import schedule_platform_scan
+        schedule_platform_scan()
+    except Exception as _scan_err:
+        logger.warning("Platform scanner startup skipped: %s", _scan_err)
+
     try:
         yield
     finally:
@@ -239,6 +249,10 @@ async def jwt_auth_middleware(request: Request, call_next: Callable):
         "/auth/google/callback",
         "/aria/google/authorize",
         "/aria/google/connect",
+        "/aria/google/status",
+        "/aria/google/disconnect",
+        "/aria/briefing/preview",
+        "/aria/briefing/send-now",
         # Onboarding + Auth — unauthenticated flows
         "/onboarding/login",
         "/onboarding/register",
@@ -261,6 +275,12 @@ async def jwt_auth_middleware(request: Request, call_next: Callable):
         "/setup/preflight",
         "/setup/schema-readiness",
         "/setup/status",
+        # Public smoke/status routes used by dashboards and health checks
+        "/agents/rex/status",
+        "/agents/orion/status",
+        "/agents/nova/status",
+        "/agents/sage/status",
+        "/agents/computer-use/status",
     }
 
     public_prefixes = (
@@ -603,3 +623,5 @@ app.include_router(superadmin.router)
 app.include_router(websocket.router)
 app.include_router(webhooks.router)
 app.include_router(dashboard_config.router)
+app.include_router(code_agent_protocol.router)
+app.include_router(platform_scan_routes.router)

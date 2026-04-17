@@ -6,7 +6,7 @@ from fastapi.testclient import TestClient
 
 from app.api.main import app
 
-client = TestClient(app)
+client = TestClient(app, headers={"Authorization": "Bearer orb-test-token"})
 
 
 def test_health_endpoint_returns_request_id_header() -> None:
@@ -37,7 +37,7 @@ def test_request_id_propagates_to_activity_log() -> None:
 
     with patch("app.database.activity_log.SupabaseService") as mock_db_cls:
         mock_db = MagicMock()
-        mock_db.insert_one.return_value = {"id": "log-123", "request_id": "req-abc-123"}
+        mock_db.log_activity.return_value = {"id": "log-123", "request_id": "req-abc-123"}
         mock_db_cls.return_value = mock_db
 
         log_activity(
@@ -47,10 +47,9 @@ def test_request_id_propagates_to_activity_log() -> None:
             request_id="req-abc-123",
         )
 
-        call_args = mock_db.insert_one.call_args
+        call_args = mock_db.log_activity.call_args
         assert call_args is not None
-        payload = call_args[0][1]
-        assert payload.get("request_id") == "req-abc-123"
+        assert call_args.kwargs.get("request_id") == "req-abc-123"
 
 
 def test_request_id_is_optional_in_log_activity() -> None:
@@ -59,7 +58,7 @@ def test_request_id_is_optional_in_log_activity() -> None:
 
     with patch("app.database.activity_log.SupabaseService") as mock_db_cls:
         mock_db = MagicMock()
-        mock_db.insert_one.return_value = {"id": "log-456"}
+        mock_db.log_activity.return_value = {"id": "log-456"}
         mock_db_cls.return_value = mock_db
 
         log_activity(
@@ -68,7 +67,6 @@ def test_request_id_is_optional_in_log_activity() -> None:
             description="Test without request ID",
         )
 
-        call_args = mock_db.insert_one.call_args
+        call_args = mock_db.log_activity.call_args
         assert call_args is not None
-        payload = call_args[0][1]
-        assert "request_id" not in payload or payload.get("request_id") is None
+        assert call_args.kwargs.get("request_id") is None

@@ -5,7 +5,7 @@ from fastapi.testclient import TestClient
 from agents.computer_use.safety_guard import SafetyGuard
 from app.api.main import app
 
-client = TestClient(app)
+client = TestClient(app, headers={"Authorization": "Bearer orb-test-token"})
 
 
 def test_safety_guard_blocks_never_allowed_action() -> None:

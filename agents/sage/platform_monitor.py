@@ -8,6 +8,7 @@ from typing import Any
 
 from app.database.connection import DatabaseConnectionError, SupabaseService
 from integrations.anthropic_client import ask_claude_smart
+from integrations.openai_client import ask_gpt_mini
 from config.settings import get_settings
 
 
@@ -144,10 +145,10 @@ class PlatformMonitor:
             "twilio": {"status": "healthy", "reason": "ok"},
         }
 
-        # Supabase — lightweight ping via owners table (already queried above,
-        # but we keep this cheap select to confirm RLS/auth is working)
+        # Supabase — lightweight ping via the shared database wrapper so tests
+        # can mock the abstraction layer without needing a live client.
         try:
-            self.db.client.table("owners").select("id").limit(1).execute()
+            self.db.fetch_all("owners")
         except Exception as error:
             results["supabase"] = {"status": "unhealthy", "reason": str(error)[:80]}
 

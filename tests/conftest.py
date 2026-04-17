@@ -12,6 +12,7 @@ import os
 from unittest.mock import MagicMock, patch
 
 import pytest
+from jose import jwt as jose_jwt
 
 # Sentinel token value injected via default_headers on module-level clients.
 TEST_TOKEN = "orb-test-token"
@@ -33,9 +34,14 @@ _FAKE_OWNER_ROW = {
 }
 
 
+_REAL_JWT_DECODE = jose_jwt.decode
+
+
 def _fake_jwt_decode(token, *args, **kwargs):
-    """Always succeed — return fake master_owner payload for any token."""
-    return _FAKE_TOKEN_PAYLOAD
+    """Bypass only the sentinel test token; decode real signed JWTs normally."""
+    if token == TEST_TOKEN:
+        return _FAKE_TOKEN_PAYLOAD
+    return _REAL_JWT_DECODE(token, *args, **kwargs)
 
 
 def _make_mock_db():

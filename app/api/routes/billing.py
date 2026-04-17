@@ -541,7 +541,7 @@ def billing_plans() -> dict[str, Any]:
         }
         for name, details in plans.items()
     ]
-    return {"plans": plans_list, "plans_by_key": plans, "addons": _addon_price_map()}
+    return {"plans": plans, "plans_list": plans_list, "addons": _addon_price_map()}
 
 
 @router.get("/upgrade-preview/{owner_id}")

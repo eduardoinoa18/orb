@@ -9,7 +9,7 @@ from app.api.routes.websocket import manager
 from integrations.ws_broadcaster import dispatch_agent_action
 
 
-client = TestClient(app)
+client = TestClient(app, headers={"Authorization": "Bearer orb-test-token"})
 
 
 def test_dashboard_websocket_receives_agent_action() -> None:

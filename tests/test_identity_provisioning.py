@@ -8,7 +8,7 @@ from agents.identity.email_manager import create_agent_email
 from agents.identity.phone_manager import route_incoming_call, route_incoming_sms
 from app.api.main import app
 
-client = TestClient(app)
+client = TestClient(app, headers={"Authorization": "Bearer orb-test-token"})
 
 
 def test_create_agent_email_builds_alias_address() -> None:

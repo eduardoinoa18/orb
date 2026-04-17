@@ -308,6 +308,15 @@ class ToolDispatcher:
             "list_code_tasks": self._list_code_tasks,
             "approve_code_task": self._approve_code_task,
             "reject_code_task": self._reject_code_task,
+            # Admin-only: Platform Scan + Health
+            "platform_scan": self._platform_scan,
+            "platform_health": self._platform_health,
+            "answer_agent_question": self._answer_agent_question,
+            # Skill Engine
+            "my_agent_skills": self._my_agent_skills,
+            "run_skill_review": self._run_skill_review,
+            # Multi-AI
+            "ai_route": self._ai_route,
             # Utility
             "rate_status": self._rate_status,
         }
@@ -2138,3 +2147,208 @@ class ToolDispatcher:
             return ToolResult("reject_code_task", False, error=str(e))
         except Exception as e:
             return ToolResult("reject_code_task", False, error=str(e))
+
+    # ── Platform Scan ──────────────────────────────────────────────────────────
+
+    def _platform_scan(self, p: dict[str, Any]) -> ToolResult:
+        """Run a full platform soft-check scan and return the digest.
+
+        Admin only. Checks pending requests, stale code tasks, unread messages,
+        integration health, and agent activity. Returns urgency score + summary.
+        """
+        try:
+            self._assert_admin()
+            from agents.platform_scan import PlatformScanner
+            scanner = PlatformScanner()
+            scan = scanner.run_full_scan()
+            scanner.push_digest_to_commander(scan)
+            digest = scanner.build_digest_message(scan)
+            return ToolResult(
+                "platform_scan", True,
+                data={
+                    "digest": digest,
+                    "urgency_score": scan.get("urgency_score", 0),
+                    "needs_attention": scan.get("needs_attention", False),
+                    "pending_requests": scan.get("requests", {}).get("total", 0),
+                    "tasks_needs_review": scan.get("code_tasks", {}).get("needs_review", 0),
+                    "unread_messages": scan.get("unread_messages", {}).get("total", 0),
+                    "integrations_healthy": scan.get("integrations", {}).get("all_healthy", True),
+                    "failed_integrations": scan.get("integrations", {}).get("failed", []),
+                }
+            )
+        except PermissionError as e:
+            return ToolResult("platform_scan", False, error=str(e))
+        except Exception as e:
+            return ToolResult("platform_scan", False, error=str(e))
+
+    def _platform_health(self, p: dict[str, Any]) -> ToolResult:
+        """Quick integration health check — no full scan needed.
+
+        Returns which integrations are configured and which are missing.
+        """
+        try:
+            from agents.platform_scan import PlatformScanner
+            scanner = PlatformScanner()
+            health = scanner.scan_integration_health()
+            configured = health.get("configured", [])
+            failed = health.get("failed", [])
+            msg = f"✅ Configured: {', '.join(configured) or 'none'}"
+            if failed:
+                msg += f"\n❌ Not configured: {', '.join(failed)}"
+            else:
+                msg += "\nAll integrations healthy!"
+            return ToolResult("platform_health", True, data=msg)
+        except Exception as e:
+            return ToolResult("platform_health", False, error=str(e))
+
+    def _answer_agent_question(self, p: dict[str, Any]) -> ToolResult:
+        """Answer a code agent's clarifying question about a task.
+
+        Params:
+          task_id (str)     — the platform task ID
+          question_id (str) — from the task_events table
+          answer (str)      — your answer to the code agent
+          approved_to_continue (bool) — default True
+        """
+        try:
+            self._assert_admin()
+            from app.database.connection import SupabaseService
+            db = SupabaseService()
+            task_id = p.get("task_id", "")
+            question_id = p.get("question_id", "")
+            answer = p.get("answer", "")
+            approved = bool(p.get("approved_to_continue", True))
+
+            db.client.table("task_events").insert({
+                "task_id": task_id,
+                "event_type": "answer",
+                "message": answer,
+                "payload": {"question_id": question_id, "approved_to_continue": approved},
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            }).execute()
+
+            if approved:
+                db.client.table("platform_tasks").update({
+                    "status": "picked_up",
+                    "last_agent_activity": datetime.now(timezone.utc).isoformat(),
+                }).eq("id", task_id).eq("status", "waiting_answer").execute()
+
+            return ToolResult(
+                "answer_agent_question", True,
+                data=f"Answer posted to task {task_id[:8]}. Agent can continue: {approved}."
+            )
+        except PermissionError as e:
+            return ToolResult("answer_agent_question", False, error=str(e))
+        except Exception as e:
+            return ToolResult("answer_agent_question", False, error=str(e))
+
+    # ── Skill Engine ───────────────────────────────────────────────────────────
+
+    def _my_agent_skills(self, p: dict[str, Any]) -> ToolResult:
+        """Show the current skill profile for a specific agent.
+
+        Params: agent_slug (str) — rex | aria | nova | orion | sage | commander
+        """
+        try:
+            from agents.skill_engine import AgentSkillEngine, AGENT_CORE_SKILLS, UNIVERSAL_SKILLS
+            agent_slug = p.get("agent_slug", "commander")
+            # Load directly without instantiating the full agent
+            from app.database.connection import SupabaseService
+            try:
+                db = SupabaseService()
+                rows = db.client.table("agent_skills") \
+                    .select("*") \
+                    .eq("agent_slug", agent_slug) \
+                    .eq("owner_id", self.owner_id) \
+                    .limit(1) \
+                    .execute()
+                if rows.data:
+                    row = rows.data[0]
+                    core = row.get("core_skills") or AGENT_CORE_SKILLS.get(agent_slug, [])
+                    expanded = row.get("expanded_skills") or []
+                    pending = row.get("pending_skills") or []
+                    adaptations = row.get("business_adaptations") or []
+                else:
+                    core = AGENT_CORE_SKILLS.get(agent_slug, [])
+                    expanded = []
+                    pending = []
+                    adaptations = []
+            except Exception:
+                core = AGENT_CORE_SKILLS.get(agent_slug, [])
+                expanded, pending, adaptations = [], [], []
+
+            lines = [f"Skills for {agent_slug.upper()} agent:"]
+            lines.append(f"Core ({len(core)}): {', '.join(core) or 'none'}")
+            if expanded:
+                lines.append(f"Expanded ({len(expanded)}): {', '.join(expanded)}")
+            if pending:
+                lines.append(f"Pending approval ({len(pending)}): {', '.join(pending)}")
+            if adaptations:
+                lines.append("Business adaptations:")
+                for a in adaptations[:5]:
+                    lines.append(f"  • {a}")
+            return ToolResult("my_agent_skills", True, data="\n".join(lines))
+        except Exception as e:
+            return ToolResult("my_agent_skills", False, error=str(e))
+
+    def _run_skill_review(self, p: dict[str, Any]) -> ToolResult:
+        """Trigger a skill review cycle for an agent.
+
+        Analyzes recent requests, discovers needed skills, adapts to business context.
+        Params: agent_slug (str) — which agent to review
+        """
+        try:
+            from agents.skill_engine import AgentSkillEngine
+            agent_slug = p.get("agent_slug", "commander")
+
+            # Create a temporary engine instance for the requested agent
+            engine = AgentSkillEngine()
+            engine.agent_slug = agent_slug
+
+            result = engine.run_skill_review(owner_id=self.owner_id)
+            msg = (
+                f"Skill review for {agent_slug}: "
+                f"+{len(result.get('new_skills_expanded', []))} skills expanded, "
+                f"{len(result.get('skills_requested', []))} requested, "
+                f"{result.get('adaptations_updated', 0)} adaptations updated. "
+                f"Total skills: {result.get('total_skills', 0)}."
+            )
+            return ToolResult("run_skill_review", True, data=msg)
+        except Exception as e:
+            return ToolResult("run_skill_review", False, error=str(e))
+
+    # ── Multi-AI Router ────────────────────────────────────────────────────────
+
+    def _ai_route(self, p: dict[str, Any]) -> ToolResult:
+        """Route a prompt to the best AI provider/model automatically.
+
+        Params:
+          prompt (str)       — the prompt to send
+          task_type (str)    — see TASK_PROFILES in ai_router.py for options
+          system (str)       — optional system prompt override
+        """
+        try:
+            from integrations.ai_router import route
+            prompt = p.get("prompt", "")
+            task_type = p.get("task_type", "conversation")
+            system = p.get("system", "You are a helpful AI assistant.")
+
+            if not prompt:
+                return ToolResult("ai_route", False, error="prompt is required")
+
+            result = route(
+                task_type=task_type,
+                prompt=prompt,
+                system=system,
+                owner_id=self.owner_id,
+            )
+            text = result.get("text", "")
+            provider = result.get("provider", "unknown")
+            model = result.get("model", "unknown")
+            cost = result.get("cost_cents", 0)
+            return ToolResult(
+                "ai_route", True,
+                data=f"[{provider}/{model} ~{cost}¢]\n{text}"
+            )
+        except Exception as e:
+            return ToolResult("ai_route", False, error=str(e))

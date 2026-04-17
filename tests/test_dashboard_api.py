@@ -15,7 +15,11 @@ client = TestClient(app, headers={"Authorization": "Bearer orb-test-token"})
 def _auth_headers() -> dict[str, str]:
     """Builds a valid bearer token for protected route tests."""
     settings = get_settings()
-    token = jwt.encode({"sub": "test-owner"}, settings.jwt_secret_key, algorithm="HS256")
+    token = jwt.encode(
+        {"sub": "00000000-0000-0000-0000-000000000001"},
+        settings.jwt_secret_key,
+        algorithm="HS256",
+    )
     return {"Authorization": f"Bearer {token}"}
 
 

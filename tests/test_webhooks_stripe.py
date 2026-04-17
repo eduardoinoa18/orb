@@ -7,7 +7,7 @@ import stripe as stripe_sdk
 from app.api.main import app
 from fastapi.testclient import TestClient
 
-client = TestClient(app)
+client = TestClient(app, headers={"Authorization": "Bearer orb-test-token"})
 
 
 def test_stripe_webhook_processes_checkout_completed() -> None:
