@@ -27,6 +27,7 @@ from slowapi.errors import RateLimitExceeded
 from app.api.middleware.rate_limit import limiter
 from app.api.routes import (
     access,
+    agent_skills,
     agent_identity,
     agents,
     agent_settings,
@@ -64,6 +65,7 @@ from app.api.routes import platform_scan as platform_scan_routes
 from app.database.connection import DatabaseConnectionError, SupabaseService
 from app.ui_shell import render_dashboard, render_home, render_login
 from app.runtime.preflight import build_preflight_report
+from app.security.guard import check_body_size
 from agents.aria.briefing_scheduler import AriaBriefingScheduler
 from agents.sage.monitor_scheduler import SageMonitorScheduler
 
@@ -212,6 +214,17 @@ async def request_logging_middleware(request: Request, call_next: Callable):
     response.headers["X-Process-Time-Ms"] = str(round(duration_ms, 2))
     response.headers["X-Request-ID"] = request_id
     return response
+
+
+@app.middleware("http")
+async def body_size_guard_middleware(request: Request, call_next: Callable):
+    """Reject oversized inbound bodies early to reduce abuse risk."""
+    if request.method in {"POST", "PUT", "PATCH"}:
+        try:
+            await check_body_size(request)
+        except HTTPException as exc:
+            return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+    return await call_next(request)
 
 
 
@@ -592,6 +605,7 @@ async def health_check(deep: bool = False) -> dict[str, object]:
 
 
 app.include_router(agent_identity.router)
+app.include_router(agent_skills.router)
 app.include_router(agents.router)
 app.include_router(access.router)
 app.include_router(channel_mappings.router)

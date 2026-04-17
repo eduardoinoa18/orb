@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from agents.self_improvement import AgentSelfImprovement
+from agents.skill_engine import AgentSkillEngine
 from integrations.anthropic_client import ask_claude, ask_claude_smart
 
 
@@ -76,10 +77,14 @@ def create_newsletter_blurb(prompt: str) -> dict[str, Any]:
         }
 
 
-class NovaBrain(AgentSelfImprovement):
+class NovaBrain(AgentSelfImprovement, AgentSkillEngine):
     """Nova addendum facade for self-improvement endpoints."""
 
     agent_slug = "nova"
+
+    def __init__(self) -> None:
+        AgentSelfImprovement.__init__(self)
+        AgentSkillEngine.__init__(self)
 
     def learn_from_outcomes(self, owner_id: str) -> dict[str, Any]:
         """Runs weekly Nova review and returns a normalized update summary."""

@@ -8,18 +8,20 @@ from pathlib import Path
 from typing import Any
 
 from agents.self_improvement import AgentSelfImprovement
+from agents.skill_engine import AgentSkillEngine
 from app.database.connection import SupabaseService
 from integrations.anthropic_client import ask_claude_smart
 from integrations.token_optimizer import TokenOptimizer
 
 
-class RexBrain(AgentSelfImprovement):
+class RexBrain(AgentSelfImprovement, AgentSkillEngine):
     """Generalized sales brain that learns owner context and weekly outcomes."""
 
     agent_slug = "rex"
 
     def __init__(self) -> None:
-        super().__init__()
+        AgentSelfImprovement.__init__(self)
+        AgentSkillEngine.__init__(self)
         self.optimizer = TokenOptimizer()
         self.db = SupabaseService()
 

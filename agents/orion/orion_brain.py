@@ -6,6 +6,7 @@ import re
 from typing import Any
 
 from agents.self_improvement import AgentSelfImprovement
+from agents.skill_engine import AgentSkillEngine
 from agents.orion.market_scanner import OrionMarketScanner
 from agents.orion.paper_trader import OrionPaperTrader
 from agents.orion.performance_analyzer import OrionPerformanceAnalyzer
@@ -17,13 +18,14 @@ from app.database.connection import SupabaseService
 UUID_RE = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$")
 
 
-class OrionBrain(AgentSelfImprovement):
+class OrionBrain(AgentSelfImprovement, AgentSkillEngine):
     """High-level Orion workflow facade used by API routes."""
 
     agent_slug = "orion"
 
     def __init__(self) -> None:
-        super().__init__()
+        AgentSelfImprovement.__init__(self)
+        AgentSkillEngine.__init__(self)
         self.researcher = OrionStrategyResearcher()
         self.scanner = OrionMarketScanner()
         self.paper_trader = OrionPaperTrader()

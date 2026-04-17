@@ -6,15 +6,17 @@ from typing import Any
 
 from agents.sage.platform_monitor import PlatformMonitor
 from agents.self_improvement import AgentSelfImprovement
+from agents.skill_engine import AgentSkillEngine
 
 
-class SageBrain(AgentSelfImprovement):
+class SageBrain(AgentSelfImprovement, AgentSkillEngine):
     """Sage orchestration facade for starter addendum scope."""
 
     agent_slug = "sage"
 
     def __init__(self) -> None:
-        super().__init__()
+        AgentSelfImprovement.__init__(self)
+        AgentSkillEngine.__init__(self)
         self.monitor = PlatformMonitor()
 
     def run_platform_monitor(self) -> dict[str, Any]:

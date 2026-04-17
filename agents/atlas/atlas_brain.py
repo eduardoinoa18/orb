@@ -15,6 +15,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from agents.self_improvement import AgentSelfImprovement
+from agents.skill_engine import AgentSkillEngine
 from app.database.connection import SupabaseService
 from integrations.anthropic_client import ask_claude_smart
 
@@ -25,7 +26,7 @@ _STANDARD_MODEL = "claude-3-5-sonnet-20241022"
 _HEAVY_MODEL = "claude-opus-4-5"
 
 
-class AtlasBrain(AgentSelfImprovement):
+class AtlasBrain(AgentSelfImprovement, AgentSkillEngine):
     """Orchestrates Atlas's developer capabilities.
 
     Usage:
@@ -36,7 +37,8 @@ class AtlasBrain(AgentSelfImprovement):
     agent_slug = "atlas"
 
     def __init__(self) -> None:
-        super().__init__()
+        AgentSelfImprovement.__init__(self)
+        AgentSkillEngine.__init__(self)
         self.db = SupabaseService()
 
     # ------------------------------------------------------------------

@@ -5,12 +5,17 @@ from __future__ import annotations
 from typing import Any
 
 from agents.self_improvement import AgentSelfImprovement
+from agents.skill_engine import AgentSkillEngine
 
 
-class AriaBrain(AgentSelfImprovement):
+class AriaBrain(AgentSelfImprovement, AgentSkillEngine):
 	"""Aria addendum facade for weekly learning and owner adaptation."""
 
 	agent_slug = "aria"
+
+	def __init__(self) -> None:
+		AgentSelfImprovement.__init__(self)
+		AgentSkillEngine.__init__(self)
 
 	def learn_from_outcomes(self, owner_id: str) -> dict[str, Any]:
 		"""Runs a weekly review over Aria's recent outcomes."""
