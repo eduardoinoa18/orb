@@ -42,6 +42,12 @@ class PlatformScanner:
         self._db = None
         self._admin_id: str | None = None
 
+    @staticmethod
+    def _is_missing_table_error(error: Exception) -> bool:
+        """Detect missing-table errors from Supabase/PostgREST responses."""
+        message = str(error)
+        return "PGRST205" in message or "Could not find the table" in message
+
     def _get_db(self):
         if self._db is None:
             try:
@@ -98,6 +104,9 @@ class PlatformScanner:
             urgent = [r for r in items if str(r.get("priority", "")).lower() in {"high", "urgent"}]
             return {"total": len(items), "urgent": len(urgent), "items": items}
         except Exception as e:
+            if self._is_missing_table_error(e):
+                logger.info("scan_pending_requests skipped: platform_requests table not available yet")
+                return {"total": 0, "urgent": 0, "items": [], "available": False}
             logger.warning("scan_pending_requests failed: %s", e)
             return {"total": 0, "urgent": 0, "items": [], "error": str(e)}
 
@@ -132,6 +141,15 @@ class PlatformScanner:
                 "items_stale": stale_rows.data or [],
             }
         except Exception as e:
+            if self._is_missing_table_error(e):
+                logger.info("scan_code_tasks skipped: platform_tasks table not available yet")
+                return {
+                    "needs_review": 0,
+                    "stale": 0,
+                    "items_review": [],
+                    "items_stale": [],
+                    "available": False,
+                }
             logger.warning("scan_code_tasks failed: %s", e)
             return {"needs_review": 0, "stale": 0, "items_review": [], "items_stale": [], "error": str(e)}
 
@@ -155,20 +173,25 @@ class PlatformScanner:
 
     def scan_integration_health(self) -> dict[str, Any]:
         """Checks if critical env vars / integrations are configured."""
-        checks = {
+        required_checks = {
             "anthropic":    bool(os.environ.get("ANTHROPIC_API_KEY")),
-            "openai":       bool(os.environ.get("OPENAI_API_KEY")),
             "supabase":     bool(os.environ.get("SUPABASE_URL") and os.environ.get("SUPABASE_KEY")),
+        }
+        optional_checks = {
+            "openai":       bool(os.environ.get("OPENAI_API_KEY")),
             "elevenlabs":   bool(os.environ.get("ELEVENLABS_API_KEY")),
             "twilio":       bool(os.environ.get("TWILIO_ACCOUNT_SID")),
             "telegram":     bool(os.environ.get("TELEGRAM_BOT_TOKEN")),
             "deploy_webhook": bool(os.environ.get("RAILWAY_DEPLOY_WEBHOOK") or os.environ.get("DEPLOY_WEBHOOK_URL")),
         }
-        failed = [k for k, v in checks.items() if not v]
+        checks = {**required_checks, **optional_checks}
+        failed_required = [k for k, v in required_checks.items() if not v]
+        missing_optional = [k for k, v in optional_checks.items() if not v]
         return {
-            "all_healthy": len(failed) == 0,
+            "all_healthy": len(failed_required) == 0,
             "checks": checks,
-            "failed": failed,
+            "failed": failed_required,
+            "missing_optional": missing_optional,
             "configured": [k for k, v in checks.items() if v],
         }
 
@@ -208,6 +231,19 @@ class PlatformScanner:
                 "tasks_total": len(tasks),
             }
         except Exception as e:
+            if self._is_missing_table_error(e):
+                logger.info("scan_platform_stats partial fallback: platform_tasks table not available yet")
+                try:
+                    owners_row = db.client.table("owners").select("id", count="exact").execute()
+                    return {
+                        "total_owners": owners_row.count or 0,
+                        "tasks_deployed": 0,
+                        "tasks_pending": 0,
+                        "tasks_total": 0,
+                        "tasks_available": False,
+                    }
+                except Exception:
+                    return {"tasks_available": False}
             logger.warning("scan_platform_stats failed: %s", e)
             return {}
 
@@ -283,6 +319,9 @@ class PlatformScanner:
         if not integrations.get("all_healthy"):
             failed = integrations.get("failed", [])
             lines.append(f"\n🔴 Integrations Not Configured: {', '.join(failed)}")
+        elif integrations.get("missing_optional"):
+            optional = integrations.get("missing_optional", [])
+            lines.append(f"\n🟡 Optional Integrations Not Configured: {', '.join(optional)}")
 
         # Stats
         stats = scan.get("platform_stats", {})
