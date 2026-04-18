@@ -28,6 +28,30 @@ def test_check_env_vars_passes_all_required():
     assert all(results), f"Expected all checks to pass, got failures: {results}"
 
 
+def test_check_env_vars_does_not_fail_when_openai_is_missing() -> None:
+    """OpenAI is optional and should not fail required env checks."""
+    from scripts.production_checklist import check_env_vars
+    from config.settings import Settings
+
+    mock_settings = MagicMock(spec=Settings)
+    mock_settings.platform_name = "ORB"
+    mock_settings.supabase_url = "https://abc.supabase.co"
+    mock_settings.supabase_service_key = "service_key_value"
+    mock_settings.anthropic_api_key = "sk-ant-key"
+    mock_settings.openai_api_key = ""
+    mock_settings.twilio_account_sid = "AC" + "x" * 32
+    mock_settings.twilio_auth_token = "x" * 32
+    mock_settings.twilio_from_number = "+15555550100"
+    mock_settings.jwt_secret_key = "supersecretjwtkey12345678901234567"
+    mock_settings.my_phone_number = "+15555559999"
+    mock_settings.my_email = "owner@example.com"
+
+    with patch("config.settings.get_settings", return_value=mock_settings):
+        results = check_env_vars()
+
+    assert all(results), f"Expected required env checks to pass without OpenAI, got: {results}"
+
+
 def test_check_jwt_strength_fails_weak_secret():
     """check_jwt_strength should fail on trivially weak JWT secrets."""
     from scripts.production_checklist import check_jwt_strength
@@ -118,9 +142,12 @@ def test_check_ai_integrations_fails_on_cached_or_fallback_results():
     """AI checks should fail when direct provider calls fail."""
     from scripts.production_checklist import check_ai_integrations
 
-    with patch("integrations.anthropic_client._get_client", side_effect=RuntimeError("anthropic down")), patch(
-        "integrations.openai_client._get_client", side_effect=RuntimeError("openai down"),
-    ):
+    mock_settings = MagicMock()
+    mock_settings.is_configured.return_value = True
+
+    with patch("config.settings.get_settings", return_value=mock_settings), patch(
+        "integrations.anthropic_client._get_client", side_effect=RuntimeError("anthropic down")
+    ), patch("integrations.openai_client._get_client", side_effect=RuntimeError("openai down")):
         results = check_ai_integrations(fast=False)
 
     assert results == [False, False]
@@ -140,12 +167,35 @@ def test_check_ai_integrations_passes_on_live_models():
     openai_client = MagicMock()
     openai_client.chat.completions.create.return_value = openai_response
 
-    with patch("integrations.anthropic_client._get_client", return_value=anthropic_client), patch(
-        "integrations.openai_client._get_client", return_value=openai_client
-    ):
+    mock_settings = MagicMock()
+    mock_settings.is_configured.return_value = True
+
+    with patch("config.settings.get_settings", return_value=mock_settings), patch(
+        "integrations.anthropic_client._get_client", return_value=anthropic_client
+    ), patch("integrations.openai_client._get_client", return_value=openai_client):
         results = check_ai_integrations(fast=False)
 
     assert results == [True, True]
+
+
+def test_check_ai_integrations_skips_optional_openai_when_not_configured() -> None:
+    """Optional OpenAI should not fail the checklist when absent."""
+    from scripts.production_checklist import check_ai_integrations
+
+    anthropic_response = MagicMock()
+    anthropic_response.content = [MagicMock(text="ok")]
+    anthropic_client = MagicMock()
+    anthropic_client.messages.create.return_value = anthropic_response
+
+    mock_settings = MagicMock()
+    mock_settings.is_configured.side_effect = lambda key_name: key_name != "openai_api_key"
+
+    with patch("config.settings.get_settings", return_value=mock_settings), patch(
+        "integrations.anthropic_client._get_client", return_value=anthropic_client
+    ):
+        results = check_ai_integrations(fast=False)
+
+    assert results == [True]
 
 
 def test_check_app_starts_fails_when_health_is_degraded():

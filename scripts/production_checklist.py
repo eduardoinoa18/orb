@@ -58,7 +58,6 @@ def check_env_vars() -> list[bool]:
         ("SUPABASE_URL", "supabase_url"),
         ("SUPABASE_SERVICE_KEY", "supabase_service_key"),
         ("ANTHROPIC_API_KEY", "anthropic_api_key"),
-        ("OPENAI_API_KEY", "openai_api_key"),
         ("TWILIO_ACCOUNT_SID", "twilio_account_sid"),
         ("TWILIO_AUTH_TOKEN", "twilio_auth_token"),
         ("TWILIO_FROM_NUMBER", "twilio_from_number"),
@@ -73,6 +72,9 @@ def check_env_vars() -> list[bool]:
             value = getattr(settings, attr, None)
             is_set = bool(value and str(value).strip())
             results.append(check(env_name, is_set, "set" if is_set else "MISSING"))
+        openai_value = getattr(settings, "openai_api_key", None)
+        openai_set = bool(openai_value and str(openai_value).strip())
+        check("OPENAI_API_KEY (optional)", openai_set, "set" if openai_set else "not configured")
     except Exception as e:
         results.append(check("Settings load", False, str(e)[:80]))
 
@@ -137,6 +139,9 @@ def check_ai_integrations(fast: bool = False) -> list[bool]:
     header("AI Integrations")
     results = []
 
+    from config.settings import get_settings
+    settings = get_settings()
+
     if fast:
         print(f"  [{SKIP}] Skipping AI API calls (--fast mode)")
         return results
@@ -157,6 +162,10 @@ def check_ai_integrations(fast: bool = False) -> list[bool]:
         results.append(check("Anthropic API", False, str(e)[:80]))
 
     # OpenAI
+    if not getattr(settings, "is_configured", lambda key_name: False)("openai_api_key"):
+        check("OpenAI API (optional)", True, "not configured")
+        return results
+
     try:
         from integrations.openai_client import _get_client as get_openai_client
 

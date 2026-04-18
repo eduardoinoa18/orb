@@ -70,5 +70,6 @@ def test_check_dependency_health_reports_config_errors() -> None:
 
     assert result["supabase"]["status"] == "unhealthy"
     assert result["anthropic"]["status"] == "unhealthy"
-    assert result["openai"]["status"] == "unhealthy"
+    assert result["openai"]["status"] == "healthy"
+    assert result["openai"]["required"] is False
     assert result["twilio"]["status"] == "unhealthy"

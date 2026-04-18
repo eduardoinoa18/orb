@@ -88,7 +88,7 @@ class PlatformMonitor:
         if metrics["daily_cost_dollars"] > 15:
             unhealthy.append("Daily cost exceeded $15 budget")
         for name, status in dependency_health.items():
-            if status.get("status") != "healthy":
+            if status.get("status") != "healthy" and status.get("required", True):
                 reason = status.get("reason") or "dependency check failed"
                 unhealthy.append(f"Dependency unhealthy: {name} ({reason})")
 
@@ -139,10 +139,10 @@ class PlatformMonitor:
         which is expected during early launch and not worth a paid diagnostic call.
         """
         results: dict[str, dict[str, str]] = {
-            "supabase": {"status": "healthy", "reason": "ok"},
-            "anthropic": {"status": "healthy", "reason": "ok"},
-            "openai": {"status": "healthy", "reason": "ok"},
-            "twilio": {"status": "healthy", "reason": "ok"},
+            "supabase": {"status": "healthy", "reason": "ok", "required": True},
+            "anthropic": {"status": "healthy", "reason": "ok", "required": True},
+            "openai": {"status": "healthy", "reason": "ok", "required": False},
+            "twilio": {"status": "healthy", "reason": "ok", "required": True},
         }
 
         # Supabase — lightweight ping via the shared database wrapper so tests
@@ -150,23 +150,23 @@ class PlatformMonitor:
         try:
             self.db.fetch_all("owners")
         except Exception as error:
-            results["supabase"] = {"status": "unhealthy", "reason": str(error)[:80]}
+            results["supabase"] = {"status": "unhealthy", "reason": str(error)[:80], "required": True}
 
         # Anthropic — key presence only
         try:
             settings = get_settings()
             if not getattr(settings, "anthropic_api_key", None):
-                results["anthropic"] = {"status": "unhealthy", "reason": "ANTHROPIC_API_KEY not set"}
+                results["anthropic"] = {"status": "unhealthy", "reason": "ANTHROPIC_API_KEY not set", "required": True}
         except Exception as error:
-            results["anthropic"] = {"status": "unhealthy", "reason": str(error)[:80]}
+            results["anthropic"] = {"status": "unhealthy", "reason": str(error)[:80], "required": True}
 
         # OpenAI — key presence only
         try:
             settings = get_settings()
             if not getattr(settings, "openai_api_key", None):
-                results["openai"] = {"status": "unhealthy", "reason": "OPENAI_API_KEY not set"}
+                results["openai"] = {"status": "healthy", "reason": "optional_not_configured", "required": False}
         except Exception as error:
-            results["openai"] = {"status": "unhealthy", "reason": str(error)[:80]}
+            results["openai"] = {"status": "healthy", "reason": f"optional_check_skipped:{str(error)[:40]}", "required": False}
 
         # Twilio — key presence only (no outbound message sent)
         try:
@@ -179,9 +179,10 @@ class PlatformMonitor:
                 results["twilio"] = {
                     "status": "unhealthy",
                     "reason": f"Missing: {', '.join(missing)}",
+                    "required": True,
                 }
         except Exception as error:
-            results["twilio"] = {"status": "unhealthy", "reason": str(error)[:80]}
+            results["twilio"] = {"status": "unhealthy", "reason": str(error)[:80], "required": True}
 
         return results
 

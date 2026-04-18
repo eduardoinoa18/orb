@@ -36,6 +36,7 @@ def test_health_endpoint_includes_dependencies_section() -> None:
     assert "openai" in data["dependencies"]
     assert "ready" in data["preflight"]
     assert "score" in data["preflight"]
+    assert data["dependencies"]["openai"]["required"] is False
 
 
 def test_health_endpoint_each_dependency_has_status_field() -> None:
@@ -50,17 +51,27 @@ def test_health_endpoint_each_dependency_has_status_field() -> None:
 
 
 def test_health_endpoint_overall_status_reflects_dependencies() -> None:
-    """Overall status should be 'healthy' only if all dependencies are healthy."""
+    """Overall status should reflect only required dependencies."""
     response = client.get("/health")
 
     assert response.status_code == 200
     data = response.json()
-    all_deps_healthy = all(
+    all_required_deps_healthy = all(
         dep["status"] == "healthy"
         for dep in data["dependencies"].values()
+        if dep.get("required", True)
     )
-    expected_status = "healthy" if all_deps_healthy else "degraded"
+    expected_status = "healthy" if all_required_deps_healthy else "degraded"
     assert data["status"] == expected_status
+
+
+def test_health_endpoint_marks_missing_openai_as_optional() -> None:
+    response = client.get("/health")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["dependencies"]["openai"]["required"] is False
+    assert "configured" in data["dependencies"]["openai"]
 
 
 def test_health_endpoint_supports_deep_mode_flag() -> None:
