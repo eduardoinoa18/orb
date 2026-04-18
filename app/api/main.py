@@ -125,13 +125,13 @@ def _optional_provider_status(error: str = "optional_not_configured") -> dict[st
     }
 
 
-def _required_provider_status(status: str, error: str | None) -> dict[str, object]:
+def _required_provider_status(status: str, error: str | None, configured: bool = True) -> dict[str, object]:
     """Return a health record for required integrations."""
     return {
         "status": status,
         "error": error,
         "required": True,
-        "configured": status == "healthy",
+        "configured": configured,
     }
 
 
@@ -534,7 +534,7 @@ async def health_check(deep: bool = False) -> dict[str, object]:
     
     Returns overall health status and per-dependency status.
     """
-    TIMEOUT_SECONDS = 2
+    TIMEOUT_SECONDS = 5
     
     async def check_supabase() -> dict[str, str]:
         """Check Supabase connectivity."""
@@ -544,19 +544,19 @@ async def health_check(deep: bool = False) -> dict[str, object]:
                 asyncio.to_thread(lambda: db.client.table("activity_log").select("id").limit(1).execute()),
                 timeout=TIMEOUT_SECONDS
             )
-            return _required_provider_status("healthy", None)
+            return _required_provider_status("healthy", None, configured=True)
         except asyncio.TimeoutError:
-            return _required_provider_status("unhealthy", "timeout")
+            return _required_provider_status("unhealthy", "timeout", configured=True)
         except Exception as e:
-            return _required_provider_status("unhealthy", str(e)[:80])
+            return _required_provider_status("unhealthy", str(e)[:80], configured=True)
     
     async def check_anthropic() -> dict[str, str]:
         """Check Anthropic accessibility (config-only unless deep mode is requested)."""
         if not deep:
             key = settings.resolve("anthropic_api_key")
             if _looks_placeholder(key):
-                return _required_provider_status("unhealthy", "missing_or_placeholder_key")
-            return _required_provider_status("healthy", None)
+                return _required_provider_status("unhealthy", "missing_or_placeholder_key", configured=False)
+            return _required_provider_status("healthy", None, configured=True)
 
         try:
             from integrations.anthropic_client import ask_claude
@@ -570,11 +570,11 @@ async def health_check(deep: bool = False) -> dict[str, object]:
                 ),
                 timeout=TIMEOUT_SECONDS
             )
-            return _required_provider_status("healthy", None)
+            return _required_provider_status("healthy", None, configured=True)
         except asyncio.TimeoutError:
-            return _required_provider_status("unhealthy", "timeout")
+            return _required_provider_status("unhealthy", "timeout", configured=True)
         except Exception as e:
-            return _required_provider_status("unhealthy", str(e)[:80])
+            return _required_provider_status("unhealthy", str(e)[:80], configured=True)
     
     async def check_openai() -> dict[str, str]:
         """Check OpenAI accessibility (config-only unless deep mode is requested)."""

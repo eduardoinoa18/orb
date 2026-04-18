@@ -71,7 +71,22 @@ def test_health_endpoint_marks_missing_openai_as_optional() -> None:
     assert response.status_code == 200
     data = response.json()
     assert data["dependencies"]["openai"]["required"] is False
-    assert "configured" in data["dependencies"]["openai"]
+    assert data["dependencies"]["openai"]["configured"] is False
+
+
+def test_health_endpoint_marks_supabase_as_required_and_configured_when_probe_succeeds() -> None:
+    table_query = MagicMock()
+    table_query.select.return_value.limit.return_value.execute.return_value = {"data": []}
+    fake_db = MagicMock()
+    fake_db.client.table.return_value = table_query
+
+    with patch("app.api.main.SupabaseService", return_value=fake_db):
+        response = client.get("/health")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["dependencies"]["supabase"]["required"] is True
+    assert data["dependencies"]["supabase"]["configured"] is True
 
 
 def test_health_endpoint_supports_deep_mode_flag() -> None:
