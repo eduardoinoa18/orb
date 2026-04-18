@@ -20,6 +20,8 @@ def test_health_endpoint_returns_platform_metadata() -> None:
     assert "status" in data
     assert "preflight" in data
     assert data["mode"] == "standard"
+    assert "deployment" in data
+    assert "commit" in data["deployment"]
 
 
 def test_health_endpoint_includes_dependencies_section() -> None:

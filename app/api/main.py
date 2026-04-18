@@ -6,6 +6,7 @@ endpoint: GET /health.
 
 import asyncio
 import logging
+import os
 import time
 import uuid as uuid_module
 from contextlib import asynccontextmanager
@@ -585,11 +586,20 @@ async def health_check(deep: bool = False) -> dict[str, object]:
         and openai_health["status"] == "healthy"
     )
     preflight = build_preflight_report()
+    deployed_commit = (
+        os.getenv("RAILWAY_GIT_COMMIT_SHA")
+        or os.getenv("VERCEL_GIT_COMMIT_SHA")
+        or os.getenv("GITHUB_SHA")
+        or "local"
+    )
     
     return {
         "status": "healthy" if all_healthy else "degraded",
         "platform": settings.app_name,
         "version": settings.app_version,
+        "deployment": {
+            "commit": deployed_commit,
+        },
         "dependencies": {
             "supabase": supabase_health,
             "anthropic": anthropic_health,
