@@ -175,7 +175,10 @@ class PlatformScanner:
         """Checks if critical env vars / integrations are configured."""
         required_checks = {
             "anthropic":    bool(os.environ.get("ANTHROPIC_API_KEY")),
-            "supabase":     bool(os.environ.get("SUPABASE_URL") and os.environ.get("SUPABASE_KEY")),
+            "supabase":     bool(
+                os.environ.get("SUPABASE_URL")
+                and (os.environ.get("SUPABASE_SERVICE_KEY") or os.environ.get("SUPABASE_KEY"))
+            ),
         }
         optional_checks = {
             "openai":       bool(os.environ.get("OPENAI_API_KEY")),

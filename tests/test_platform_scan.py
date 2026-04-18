@@ -11,7 +11,7 @@ def test_scan_integration_health_only_blocks_on_required_integrations() -> None:
         {
             "ANTHROPIC_API_KEY": "sk-ant-real",
             "SUPABASE_URL": "https://example.supabase.co",
-            "SUPABASE_KEY": "service-key",
+            "SUPABASE_SERVICE_KEY": "service-key",
         },
         clear=True,
     ):
