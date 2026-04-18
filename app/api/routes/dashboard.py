@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 from typing import Any
 
@@ -24,6 +25,7 @@ from agents.rex.rex_brain import RexBrain
 from agents.sage.sage_brain import SageBrain
 
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
+logger = logging.getLogger("orb.dashboard")
 
 _AGENT_BRAINS = {
     "aria": AriaBrain,

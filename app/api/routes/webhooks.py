@@ -1,6 +1,7 @@
 """Webhook routes for ORB."""
 
 import json
+import logging
 from datetime import datetime, timedelta, timezone
 from urllib.parse import parse_qs
 
@@ -25,6 +26,7 @@ from integrations.twilio_client import send_sms
 from integrations.whatsapp_commander import handle_incoming_whatsapp_message
 
 router = APIRouter(prefix="/webhooks", tags=["webhooks"])
+logger = logging.getLogger("orb.webhooks")
 
 _PLAN_AGENT_BLUEPRINTS: dict[str, list[tuple[str, str]]] = {
     "starter": [("Commander", "commander")],
