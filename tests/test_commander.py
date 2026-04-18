@@ -47,6 +47,78 @@ def test_commander_brain_process_owner_request_returns_structure() -> None:
     assert result["agents_activated"]
 
 
+def test_commander_brain_executes_direct_tool_intents() -> None:
+    brain = CommanderBrain()
+    context = {
+        "owner_profile": {"owner_name": "Edu", "plan": "professional"},
+        "pipeline": {"total": 8, "hot": 2, "qualified": 3},
+        "calendar": {"meetings_today": 2},
+        "pending_approvals": {"count": 1},
+        "daily_ai_cost": {"cost_dollars": 4.2},
+        "platform_health": {"status": "all_clear", "error_count": 0},
+        "orion": {"trades_today": 1, "win_rate": 100, "pnl_today": 55.0},
+        "urgent_alerts": [],
+    }
+
+    class _FakeToolResult:
+        def __init__(self, tool: str):
+            self.tool = tool
+
+        def to_dict(self):
+            return {
+                "tool": self.tool,
+                "success": True,
+                "data": "ok",
+                "error": None,
+                "needs_approval": False,
+                "timestamp": "2026-04-18T00:00:00+00:00",
+            }
+
+    fake_dispatcher = SimpleNamespace(
+        execute=lambda tool, params: _FakeToolResult(tool),
+    )
+
+    with patch("agents.commander.commander_brain.ask_claude") as mock_ai, \
+         patch("agents.commander.tool_dispatcher.ToolDispatcher", return_value=fake_dispatcher):
+        mock_ai.return_value = {"text": "Done. I handled it."}
+        result = brain.process_owner_request(
+            owner_message="Run platform scan and show platform health.",
+            owner_id="owner-1",
+            conversation_history=[],
+            context=context,
+        )
+
+    assert result["tool_results"]
+    tools = {row["tool"] for row in result["tool_results"]}
+    assert "platform_scan" in tools
+    assert "platform_health" in tools
+
+
+def test_commander_brain_refines_response_with_immediate_actions() -> None:
+    brain = CommanderBrain()
+    context = {
+        "owner_profile": {"owner_name": "Edu"},
+        "pipeline": {"total": 8, "hot": 2, "qualified": 3},
+        "calendar": {"meetings_today": 2},
+        "pending_approvals": {"count": 1},
+        "daily_ai_cost": {"cost_dollars": 4.2},
+        "platform_health": {"status": "all_clear", "error_count": 0},
+        "orion": {"trades_today": 1, "win_rate": 100, "pnl_today": 55.0},
+        "urgent_alerts": [],
+    }
+
+    with patch("agents.commander.commander_brain.ask_claude") as mock_ai:
+        mock_ai.return_value = {"text": "I will handle this now."}
+        result = brain.process_owner_request(
+            owner_message="Please prioritize sales leads.",
+            owner_id="owner-1",
+            conversation_history=[],
+            context=context,
+        )
+
+    assert "Immediate actions:" in result["response"]
+
+
 def test_commander_message_endpoint_returns_structured_payload(client) -> None:
     fake_context = {
         "owner_id": "owner-1",

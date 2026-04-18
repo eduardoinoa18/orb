@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from app.database.connection import DatabaseConnectionError, SupabaseService
+from app.security.guard import sanitize_prompt
 from integrations.anthropic_client import ask_claude
 
 _CONFIG_PATH = Path(__file__).resolve().parents[2] / "config" / "agent_configs" / "commander.json"
@@ -671,6 +672,100 @@ class CommanderBrain:
             )
         return plan
 
+    def _extract_direct_tool_intents(self, owner_message: str, is_admin: bool) -> list[dict[str, Any]]:
+        """Map explicit owner requests to direct tool actions Commander can run now."""
+        msg = owner_message.lower()
+        intents: list[dict[str, Any]] = []
+
+        if "run platform scan" in msg or "scan platform" in msg:
+            intents.append({"tool": "platform_scan", "params": {}})
+
+        if (
+            "platform health" in msg
+            or "health check" in msg
+            or "system health" in msg
+        ):
+            intents.append({"tool": "platform_health", "params": {}})
+
+        if "my agent skills" in msg or "agent skills" in msg:
+            intents.append({"tool": "my_agent_skills", "params": {}})
+
+        if "run skill review" in msg or "review my skills" in msg:
+            intents.append({"tool": "run_skill_review", "params": {}})
+
+        if is_admin and ("platform inbox" in msg or "requests inbox" in msg):
+            intents.append({"tool": "list_platform_inbox", "params": {}})
+
+        if is_admin and ("code task" in msg or "task queue" in msg):
+            intents.append({"tool": "list_code_tasks", "params": {}})
+
+        deduped: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for intent in intents:
+            key = intent["tool"]
+            if key in seen:
+                continue
+            seen.add(key)
+            deduped.append(intent)
+        return deduped
+
+    def _execute_direct_tool_intents(
+        self,
+        owner_id: str,
+        owner_plan: str,
+        intents: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        """Execute direct tools and return structured results for prompt/context."""
+        if not intents:
+            return []
+
+        try:
+            from agents.commander.tool_dispatcher import ToolDispatcher
+        except Exception:
+            return []
+
+        dispatcher = ToolDispatcher(owner_id=owner_id, plan=owner_plan or "starter")
+        results: list[dict[str, Any]] = []
+        for intent in intents[:4]:
+            tool = str(intent.get("tool") or "").strip()
+            params = intent.get("params") or {}
+            if not tool:
+                continue
+            tool_result = dispatcher.execute(tool, params)
+            results.append(tool_result.to_dict())
+        return results
+
+    def _refine_response_text(
+        self,
+        base_response: str,
+        actions_taken: list[dict[str, Any]],
+        direct_tool_results: list[dict[str, Any]],
+    ) -> str:
+        """Ensure responses stay direct and include explicit immediate actions."""
+        text = (base_response or "").strip()
+        if not text:
+            text = "I am on it."
+
+        action_lines: list[str] = []
+        if actions_taken:
+            action_lines.append("Immediate actions:")
+            for item in actions_taken[:4]:
+                agent = str(item.get("agent") or "agent")
+                priority = str(item.get("priority") or "high")
+                action_lines.append(f"- Activated {agent} ({priority}).")
+
+        successful_tools = [r for r in direct_tool_results if r.get("success")]
+        if successful_tools:
+            if not action_lines:
+                action_lines.append("Immediate actions:")
+            for result in successful_tools[:4]:
+                action_lines.append(f"- Executed {result.get('tool')}.")
+
+        if action_lines:
+            text = f"{text}\n\n" + "\n".join(action_lines)
+
+        return text
+
     def process_owner_request(
         self,
         owner_message: str,
@@ -679,12 +774,14 @@ class CommanderBrain:
         context: dict[str, Any],
     ) -> dict[str, Any]:
         """Processes owner request, delegates work, and returns unified response."""
+        safe_owner_message, prompt_warnings = sanitize_prompt(owner_message)
+
         profile = self._load_commander_profile(owner_id)
         owner_profile = context.get("owner_profile", {})
         owner_name = str(owner_profile.get("owner_name") or "Owner")
         commander_name = str(profile.get("commander_name") or _DEFAULT_COMMANDER_NAME)
 
-        plan = self._build_plan(owner_message, context)
+        plan = self._build_plan(safe_owner_message, context)
         actions_taken: list[dict[str, Any]] = []
         activated = sorted({item["agent_role"] for item in plan})
 
@@ -726,6 +823,18 @@ class CommanderBrain:
         bp_tone = business_profile.get("communication_tone", "professional")
         bp_length = business_profile.get("response_length", "concise")
         is_admin = self._load_is_admin(owner_id)
+        owner_plan = str(
+            context.get("owner_profile", {}).get("plan")
+            or context.get("owner_profile", {}).get("subscription_plan")
+            or "starter"
+        )
+
+        direct_intents = self._extract_direct_tool_intents(safe_owner_message, is_admin=is_admin)
+        direct_tool_results = self._execute_direct_tool_intents(
+            owner_id=owner_id,
+            owner_plan=owner_plan,
+            intents=direct_intents,
+        )
 
         # Load unread inter-agent messages
         unread_msgs = self._load_unread_messages(owner_id)
@@ -806,13 +915,27 @@ class CommanderBrain:
         user_prompt = (
             f"Current context:\n{context_summary}\n\n"
             f"Recent conversation:\n{history_text or 'No prior messages.'}\n\n"
-            f"Owner said: {owner_message}\n\n"
+            f"Owner said: {safe_owner_message}\n\n"
             "Also include a compact action list that says which agents I activated and why."
         )
+        if direct_tool_results:
+            tool_context_lines = ["Direct tools already executed in this turn:"]
+            for result in direct_tool_results[:6]:
+                tool_name = str(result.get("tool") or "tool")
+                ok = bool(result.get("success"))
+                if ok:
+                    tool_context_lines.append(f"- {tool_name}: success")
+                else:
+                    tool_context_lines.append(
+                        f"- {tool_name}: failed ({str(result.get('error') or 'unknown error')[:120]})"
+                    )
+            user_prompt += "\n\n" + "\n".join(tool_context_lines)
+        if prompt_warnings:
+            user_prompt += "\n\nInput safety note: potential prompt-injection pattern detected."
 
         # Use Haiku for routine chat (25x cheaper), Sonnet only for complex analysis
-        intent = self._infer_intent(owner_message)
-        needs_deep = intent.get("needs_decision", False) or len(owner_message) > 300
+        intent = self._infer_intent(safe_owner_message)
+        needs_deep = intent.get("needs_decision", False) or len(safe_owner_message) > 300
         default_model = "claude-sonnet-4-6" if needs_deep else "claude-haiku-4-5-20251001"
         model = str(profile.get("brain_model") or default_model)
         budget = 10 if needs_deep else 4
@@ -851,6 +974,12 @@ class CommanderBrain:
                 "cost_dollars": 0.0,
             }
 
+        response_text = self._refine_response_text(
+            base_response=response_text,
+            actions_taken=actions_taken,
+            direct_tool_results=direct_tool_results,
+        )
+
         needs_approval = [
             "Any outbound message that affects customer commitments",
             "Any billing or plan change",
@@ -859,6 +988,7 @@ class CommanderBrain:
         return {
             "response": response_text,
             "actions_taken": actions_taken,
+            "tool_results": direct_tool_results,
             "agents_activated": activated,
             "ai_usage": ai_usage,
             "follow_ups_scheduled": [
@@ -869,7 +999,10 @@ class CommanderBrain:
                 for item in actions_taken
             ],
             "needs_approval": needs_approval,
-            "summary_for_activity_log": f"Commander processed owner request and activated {', '.join(activated)}.",
+            "summary_for_activity_log": (
+                f"Commander processed owner request, activated {', '.join(activated)}"
+                + (f", and executed {len(direct_tool_results)} direct tool(s)." if direct_tool_results else ".")
+            ),
             "commander_name": commander_name,
         }
 
