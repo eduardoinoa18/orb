@@ -317,6 +317,28 @@ class ToolDispatcher:
             "run_skill_review": self._run_skill_review,
             # Multi-AI
             "ai_route": self._ai_route,
+            # Zara — Customer Success & Onboarding
+            "zara_chat": self._zara_chat,
+            "onboarding_status": self._onboarding_status,
+            "churn_risk": self._churn_risk,
+            "send_nps": self._send_nps,
+            "nps_summary": self._nps_summary,
+            "success_review": self._success_review,
+            # Finn — Finance & Bookkeeping
+            "finn_chat": self._finn_chat,
+            "log_transaction": self._log_transaction,
+            "create_invoice": self._create_invoice,
+            "send_invoice": self._send_invoice,
+            "invoice_reminders": self._invoice_reminders,
+            "financial_snapshot": self._financial_snapshot,
+            "pl_report": self._pl_report,
+            # Vest — Investment & Portfolio
+            "vest_chat": self._vest_chat,
+            "add_holding": self._add_holding,
+            "portfolio_summary": self._portfolio_summary,
+            "research_asset": self._research_asset,
+            "write_memo": self._write_memo,
+            "rebalance_check": self._rebalance_check,
             # Utility
             "rate_status": self._rate_status,
         }
@@ -2352,3 +2374,301 @@ class ToolDispatcher:
             )
         except Exception as e:
             return ToolResult("ai_route", False, error=str(e))
+
+    # ── Zara — Customer Success ────────────────────────────────────────────────
+
+    def _zara_chat(self, p: dict[str, Any]) -> ToolResult:
+        """Chat with Zara about customer success, onboarding, or churn.
+        Params: message (str)
+        """
+        try:
+            from agents.zara.zara_brain import ZaraBrain
+            brain = ZaraBrain()
+            result = brain.chat(owner_id=self.owner_id, message=p.get("message", ""))
+            return ToolResult("zara_chat", True, data=result.get("message", ""))
+        except Exception as e:
+            return ToolResult("zara_chat", False, error=str(e))
+
+    def _onboarding_status(self, p: dict[str, Any]) -> ToolResult:
+        """Get onboarding progress for owner (or specified owner_id for admin).
+        Params: owner_id (str, optional)
+        """
+        try:
+            from agents.zara.onboarding_flow import OnboardingFlow
+            oid = p.get("owner_id", self.owner_id)
+            flow = OnboardingFlow()
+            result = flow.get_status(oid)
+            pct = result.get("progress_pct", 0)
+            current = result.get("current_step", "unknown")
+            return ToolResult("onboarding_status", True, data=f"Onboarding {pct}% complete. Current step: {current}")
+        except Exception as e:
+            return ToolResult("onboarding_status", False, error=str(e))
+
+    def _churn_risk(self, p: dict[str, Any]) -> ToolResult:
+        """Run churn risk analysis for an owner (admin only).
+        Params: owner_id (str)
+        """
+        try:
+            from agents.zara.zara_brain import ZaraBrain
+            brain = ZaraBrain()
+            oid = p.get("owner_id", self.owner_id)
+            result = brain.analyze_churn_risk(oid)
+            risk = result.get("risk_level", "unknown")
+            score = result.get("health_score", 0)
+            signals = result.get("signals", [])
+            return ToolResult("churn_risk", True, data=f"Owner {oid}: {risk} risk (score {score}/100). Signals: {signals}")
+        except Exception as e:
+            return ToolResult("churn_risk", False, error=str(e))
+
+    def _send_nps(self, p: dict[str, Any]) -> ToolResult:
+        """Send NPS survey to owner (admin only).
+        Params: owner_id (str)
+        """
+        try:
+            from agents.zara.nps_engine import NPSEngine
+            nps = NPSEngine()
+            result = nps.send_survey(p.get("owner_id", self.owner_id))
+            return ToolResult("send_nps", True, data=f"NPS survey sent: {result}")
+        except Exception as e:
+            return ToolResult("send_nps", False, error=str(e))
+
+    def _nps_summary(self, p: dict[str, Any]) -> ToolResult:
+        """Get platform-wide NPS score summary (admin only)."""
+        try:
+            from agents.zara.nps_engine import NPSEngine
+            nps = NPSEngine()
+            result = nps.get_summary()
+            score = result.get("nps_score")
+            total = result.get("total_responses", 0)
+            breakdown = result.get("breakdown", {})
+            return ToolResult("nps_summary", True, data=(
+                f"Platform NPS: {score} (from {total} responses). "
+                f"Promoters: {breakdown.get('promoters', 0)}, "
+                f"Passives: {breakdown.get('passives', 0)}, "
+                f"Detractors: {breakdown.get('detractors', 0)}. "
+                f"Insights: {result.get('ai_insights', '')[:200]}"
+            ))
+        except Exception as e:
+            return ToolResult("nps_summary", False, error=str(e))
+
+    def _success_review(self, p: dict[str, Any]) -> ToolResult:
+        """Run Zara's weekly platform success review (admin only)."""
+        try:
+            from agents.zara.success_tracker import SuccessTracker
+            tracker = SuccessTracker()
+            result = tracker.run_weekly_review()
+            return ToolResult("success_review", True, data=(
+                f"Success review: {result.get('total', 0)} owners, "
+                f"{result.get('at_risk', 0)} at risk, "
+                f"{result.get('healthy', 0)} healthy. "
+                f"{result.get('summary', '')[:300]}"
+            ))
+        except Exception as e:
+            return ToolResult("success_review", False, error=str(e))
+
+    # ── Finn — Finance & Bookkeeping ───────────────────────────────────────────
+
+    def _finn_chat(self, p: dict[str, Any]) -> ToolResult:
+        """Chat with Finn about finances, invoices, or bookkeeping.
+        Params: message (str)
+        """
+        try:
+            from agents.finn.finn_brain import FinnBrain
+            brain = FinnBrain()
+            result = brain.chat(owner_id=self.owner_id, message=p.get("message", ""))
+            return ToolResult("finn_chat", True, data=result.get("message", ""))
+        except Exception as e:
+            return ToolResult("finn_chat", False, error=str(e))
+
+    def _log_transaction(self, p: dict[str, Any]) -> ToolResult:
+        """Log a financial transaction with Finn.
+        Params: amount (float), category (str), description (str), txn_type (str: income|expense), date (str optional)
+        """
+        try:
+            from agents.finn.bookkeeping_engine import BookkeepingEngine
+            books = BookkeepingEngine()
+            result = books.log_transaction(
+                owner_id=self.owner_id,
+                amount=float(p.get("amount", 0)),
+                category=str(p.get("category", "other")),
+                description=str(p.get("description", "")),
+                txn_type=str(p.get("txn_type", "expense")),
+                date=p.get("date"),
+            )
+            return ToolResult("log_transaction", True, data=f"Transaction logged: {result}")
+        except Exception as e:
+            return ToolResult("log_transaction", False, error=str(e))
+
+    def _create_invoice(self, p: dict[str, Any]) -> ToolResult:
+        """Create an invoice with Finn.
+        Params: client_name (str), client_email (str), line_items (list), due_days (int)
+        """
+        try:
+            from agents.finn.invoice_tracker import InvoiceTracker
+            invoices = InvoiceTracker()
+            result = invoices.create_invoice(
+                owner_id=self.owner_id,
+                client_name=str(p.get("client_name", "")),
+                client_email=str(p.get("client_email", "")),
+                line_items=p.get("line_items", []),
+                due_days=int(p.get("due_days", 30)),
+                notes=str(p.get("notes", "")),
+            )
+            inv = result.get("invoice", {})
+            return ToolResult("create_invoice", True, data=(
+                f"Invoice created: {inv.get('invoice_number')} for "
+                f"{inv.get('client_name')} — ${inv.get('total', 0):,.2f} due {inv.get('due_date')}"
+            ))
+        except Exception as e:
+            return ToolResult("create_invoice", False, error=str(e))
+
+    def _send_invoice(self, p: dict[str, Any]) -> ToolResult:
+        """Send an invoice to a client.
+        Params: invoice_id (str)
+        """
+        try:
+            from agents.finn.invoice_tracker import InvoiceTracker
+            invoices = InvoiceTracker()
+            result = invoices.send_invoice(p.get("invoice_id", ""))
+            return ToolResult("send_invoice", True, data=f"Invoice sent: {result}")
+        except Exception as e:
+            return ToolResult("send_invoice", False, error=str(e))
+
+    def _invoice_reminders(self, p: dict[str, Any]) -> ToolResult:
+        """Send payment reminders for all overdue invoices."""
+        try:
+            from agents.finn.invoice_tracker import InvoiceTracker
+            invoices = InvoiceTracker()
+            result = invoices.send_reminders(self.owner_id)
+            return ToolResult("invoice_reminders", True, data=(
+                f"Reminders: {result.get('overdue_count', 0)} overdue, "
+                f"{result.get('reminders_sent', 0)} sent."
+            ))
+        except Exception as e:
+            return ToolResult("invoice_reminders", False, error=str(e))
+
+    def _financial_snapshot(self, p: dict[str, Any]) -> ToolResult:
+        """Get monthly financial snapshot (income, expenses, net).
+        Params: month (str optional, YYYY-MM)
+        """
+        try:
+            from agents.finn.bookkeeping_engine import BookkeepingEngine
+            books = BookkeepingEngine()
+            snap = books.get_monthly_snapshot(owner_id=self.owner_id, month=p.get("month"))
+            return ToolResult("financial_snapshot", True, data=(
+                f"Month {snap.get('month')}: "
+                f"Income ${snap.get('total_income', 0):,.2f}, "
+                f"Expenses ${snap.get('total_expenses', 0):,.2f}, "
+                f"Net ${snap.get('net', 0):,.2f}. "
+                f"Pending invoices: {snap.get('pending_invoice_count', 0)}, "
+                f"Overdue: {snap.get('overdue_invoice_count', 0)}"
+            ))
+        except Exception as e:
+            return ToolResult("financial_snapshot", False, error=str(e))
+
+    def _pl_report(self, p: dict[str, Any]) -> ToolResult:
+        """Generate a P&L report with AI narrative."""
+        try:
+            from agents.finn.bookkeeping_engine import BookkeepingEngine
+            books = BookkeepingEngine()
+            result = books.generate_pl_report(owner_id=self.owner_id)
+            return ToolResult("pl_report", True, data=result.get("narrative", str(result)))
+        except Exception as e:
+            return ToolResult("pl_report", False, error=str(e))
+
+    # ── Vest — Investment & Portfolio ──────────────────────────────────────────
+
+    def _vest_chat(self, p: dict[str, Any]) -> ToolResult:
+        """Chat with Vest about investments, portfolio, or research.
+        Params: message (str)
+        """
+        try:
+            from agents.vest.vest_brain import VestBrain
+            brain = VestBrain()
+            result = brain.chat(owner_id=self.owner_id, message=p.get("message", ""))
+            return ToolResult("vest_chat", True, data=result.get("message", ""))
+        except Exception as e:
+            return ToolResult("vest_chat", False, error=str(e))
+
+    def _add_holding(self, p: dict[str, Any]) -> ToolResult:
+        """Add a holding to the investment portfolio.
+        Params: ticker (str), asset_type (str), quantity (float), avg_cost (float)
+        """
+        try:
+            from agents.vest.portfolio_tracker import PortfolioTracker
+            pt = PortfolioTracker()
+            result = pt.add_holding(
+                owner_id=self.owner_id,
+                ticker=str(p.get("ticker", "")).upper(),
+                asset_type=str(p.get("asset_type", "stock")),
+                quantity=float(p.get("quantity", 0)),
+                avg_cost=float(p.get("avg_cost", 0)),
+                notes=str(p.get("notes", "")),
+            )
+            return ToolResult("add_holding", True, data=f"Holding added: {result}")
+        except Exception as e:
+            return ToolResult("add_holding", False, error=str(e))
+
+    def _portfolio_summary(self, p: dict[str, Any]) -> ToolResult:
+        """Get portfolio summary with holdings and P&L."""
+        try:
+            from agents.vest.portfolio_tracker import PortfolioTracker
+            pt = PortfolioTracker()
+            port = pt.get_full_portfolio(self.owner_id)
+            return ToolResult("portfolio_summary", True, data=(
+                f"Portfolio: {port.get('holding_count', 0)} positions, "
+                f"Total value ${port.get('total_value', 0):,.2f}, "
+                f"YTD {port.get('ytd_return_pct', 0):.1f}%. "
+                f"Allocation: {port.get('allocation', {})}"
+            ))
+        except Exception as e:
+            return ToolResult("portfolio_summary", False, error=str(e))
+
+    def _research_asset(self, p: dict[str, Any]) -> ToolResult:
+        """Research a specific asset (stock, crypto, ETF).
+        Params: ticker (str), asset_type (str optional)
+        """
+        try:
+            from agents.vest.asset_researcher import AssetResearcher
+            researcher = AssetResearcher()
+            result = researcher.research(
+                ticker=str(p.get("ticker", "")).upper(),
+                asset_type=str(p.get("asset_type", "stock")),
+            )
+            return ToolResult("research_asset", True, data=result.get("ai_analysis", str(result))[:800])
+        except Exception as e:
+            return ToolResult("research_asset", False, error=str(e))
+
+    def _write_memo(self, p: dict[str, Any]) -> ToolResult:
+        """Generate an investment memo for a ticker.
+        Params: ticker (str), position_type (str: long|short|watch)
+        """
+        try:
+            from agents.vest.vest_brain import VestBrain
+            brain = VestBrain()
+            result = brain.write_investment_memo(
+                owner_id=self.owner_id,
+                ticker=str(p.get("ticker", "")).upper(),
+                position_type=str(p.get("position_type", "long")),
+            )
+            return ToolResult("write_memo", True, data=result.get("content", str(result))[:800])
+        except Exception as e:
+            return ToolResult("write_memo", False, error=str(e))
+
+    def _rebalance_check(self, p: dict[str, Any]) -> ToolResult:
+        """Check if portfolio needs rebalancing."""
+        try:
+            from agents.vest.portfolio_tracker import PortfolioTracker
+            pt = PortfolioTracker()
+            result = pt.check_rebalancing(self.owner_id)
+            needs = result.get("needs_rebalancing", False)
+            alerts = result.get("drift_alerts", [])
+            if not needs:
+                return ToolResult("rebalance_check", True, data="Portfolio is balanced — no rebalancing needed.")
+            alert_text = "; ".join(
+                f"{a['asset_type']} is {a['action']} by {a['drift_pct']}%"
+                for a in alerts
+            )
+            return ToolResult("rebalance_check", True, data=f"Rebalancing recommended: {alert_text}")
+        except Exception as e:
+            return ToolResult("rebalance_check", False, error=str(e))

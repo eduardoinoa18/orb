@@ -715,26 +715,54 @@ async def discord_interactions_webhook(request: Request) -> dict[str, object]:
 
 
 @router.post("/telegram/updates")
-async def telegram_updates_webhook(request: Request) -> dict[str, object]:
-    """Handles Telegram bot updates via webhook."""
+async def telegram_updates_webhook(
+    request: Request,
+    x_telegram_bot_api_secret_token: str | None = Header(default=None, alias="X-Telegram-Bot-Api-Secret-Token"),
+) -> dict[str, object]:
+    """Handles Telegram Bot API webhook updates.
+
+    Telegram POSTs updates here when messages are sent to the bot.
+    Validated via the X-Telegram-Bot-Api-Secret-Token header (set during
+    setWebhook registration). Set TELEGRAM_WEBHOOK_SECRET in Railway env vars.
+    """
     from integrations.telegram_client import validate_telegram_webhook, handle_incoming_telegram_message
-    
+
     payload = await request.json()
     settings = get_settings()
     bot_token = settings.resolve("telegram_bot_token", default="").strip()
-    
-    if not bot_token or not validate_telegram_webhook(payload, bot_token):
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid Telegram data")
-    
+
+    if not bot_token:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Telegram not configured")
+
+    if not validate_telegram_webhook(secret_token_header=x_telegram_bot_api_secret_token, bot_token=bot_token):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid Telegram webhook secret")
+
+    # Handle regular messages
     message = payload.get("message", {})
     if message:
         chat_id = message.get("chat", {}).get("id", "")
-        user_id = message.get("from", {}).get("id", "")
+        user_id = str(message.get("from", {}).get("id", ""))
+        username = message.get("from", {}).get("username", "")
         text = message.get("text", "")
-        
-        result = handle_incoming_telegram_message(chat_id=chat_id, user_id=user_id, text=text)
-        return {"received": True, "result": result}
-    
+
+        if text:
+            result = handle_incoming_telegram_message(
+                chat_id=chat_id, user_id=user_id, text=text, username=username,
+            )
+            return {"received": True, "result": result}
+
+    # Handle callback queries (button taps)
+    callback = payload.get("callback_query", {})
+    if callback:
+        chat_id = callback.get("message", {}).get("chat", {}).get("id", "")
+        user_id = str(callback.get("from", {}).get("id", ""))
+        data = callback.get("data", "")
+        if data:
+            result = handle_incoming_telegram_message(
+                chat_id=chat_id, user_id=user_id, text=data,
+            )
+            return {"received": True, "result": result}
+
     return {"received": True}
 
 
