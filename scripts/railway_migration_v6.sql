@@ -12,7 +12,7 @@
 -- Onboarding flows table
 CREATE TABLE IF NOT EXISTS onboarding_flows (
     id              UUID DEFAULT gen_random_uuid() PRIMARY KEY,
-    owner_id        UUID NOT NULL REFERENCES owner_profiles(owner_id) ON DELETE CASCADE,
+    owner_id        UUID NOT NULL REFERENCES owners(id) ON DELETE CASCADE,
     steps           JSONB NOT NULL DEFAULT '{}',
     current_step    TEXT,
     started_at      TIMESTAMPTZ DEFAULT NOW(),
@@ -29,7 +29,7 @@ CREATE INDEX IF NOT EXISTS idx_onboarding_flows_completed ON onboarding_flows(co
 -- NPS responses table
 CREATE TABLE IF NOT EXISTS nps_responses (
     id              UUID DEFAULT gen_random_uuid() PRIMARY KEY,
-    owner_id        UUID NOT NULL REFERENCES owner_profiles(owner_id) ON DELETE CASCADE,
+    owner_id        UUID NOT NULL REFERENCES owners(id) ON DELETE CASCADE,
     score           SMALLINT CHECK (score BETWEEN 0 AND 10),
     comment         TEXT,
     category        TEXT CHECK (category IN ('promoter', 'passive', 'detractor')),
@@ -50,7 +50,7 @@ CREATE INDEX IF NOT EXISTS idx_nps_responses_category ON nps_responses(category)
 -- Financial transactions
 CREATE TABLE IF NOT EXISTS transactions (
     id          UUID DEFAULT gen_random_uuid() PRIMARY KEY,
-    owner_id    UUID NOT NULL REFERENCES owner_profiles(owner_id) ON DELETE CASCADE,
+    owner_id    UUID NOT NULL REFERENCES owners(id) ON DELETE CASCADE,
     amount      NUMERIC(14, 2) NOT NULL CHECK (amount >= 0),
     category    TEXT NOT NULL,
     description TEXT NOT NULL,
@@ -65,12 +65,13 @@ CREATE INDEX IF NOT EXISTS idx_transactions_owner ON transactions(owner_id);
 CREATE INDEX IF NOT EXISTS idx_transactions_date ON transactions(txn_date);
 CREATE INDEX IF NOT EXISTS idx_transactions_type ON transactions(txn_type);
 CREATE INDEX IF NOT EXISTS idx_transactions_category ON transactions(category);
-CREATE INDEX IF NOT EXISTS idx_transactions_owner_month ON transactions(owner_id, DATE_TRUNC('month', txn_date));
+-- Keep monthly queries fast without using non-immutable expressions in index definitions.
+CREATE INDEX IF NOT EXISTS idx_transactions_owner_txn_date ON transactions(owner_id, txn_date);
 
 -- Invoices
 CREATE TABLE IF NOT EXISTS invoices (
     id                  UUID DEFAULT gen_random_uuid() PRIMARY KEY,
-    owner_id            UUID NOT NULL REFERENCES owner_profiles(owner_id) ON DELETE CASCADE,
+    owner_id            UUID NOT NULL REFERENCES owners(id) ON DELETE CASCADE,
     invoice_number      TEXT NOT NULL UNIQUE,
     client_name         TEXT NOT NULL,
     client_email        TEXT NOT NULL,
@@ -114,7 +115,7 @@ CREATE TRIGGER trg_invoices_updated_at
 -- Portfolio holdings
 CREATE TABLE IF NOT EXISTS portfolio_holdings (
     id          UUID DEFAULT gen_random_uuid() PRIMARY KEY,
-    owner_id    UUID NOT NULL REFERENCES owner_profiles(owner_id) ON DELETE CASCADE,
+    owner_id    UUID NOT NULL REFERENCES owners(id) ON DELETE CASCADE,
     ticker      TEXT NOT NULL,
     asset_type  TEXT NOT NULL DEFAULT 'stock'
                 CHECK (asset_type IN ('stock', 'etf', 'crypto', 'real_estate', 'bond', 'alternative', 'other')),
@@ -132,7 +133,7 @@ CREATE INDEX IF NOT EXISTS idx_portfolio_ticker ON portfolio_holdings(ticker);
 -- Investment memos
 CREATE TABLE IF NOT EXISTS investment_memos (
     id              UUID DEFAULT gen_random_uuid() PRIMARY KEY,
-    owner_id        UUID NOT NULL REFERENCES owner_profiles(owner_id) ON DELETE CASCADE,
+    owner_id        UUID NOT NULL REFERENCES owners(id) ON DELETE CASCADE,
     ticker          TEXT NOT NULL,
     position_type   TEXT DEFAULT 'long' CHECK (position_type IN ('long', 'short', 'watch', 'overview')),
     content         TEXT NOT NULL,
@@ -164,41 +165,53 @@ ALTER TABLE portfolio_holdings    ENABLE ROW LEVEL SECURITY;
 ALTER TABLE investment_memos      ENABLE ROW LEVEL SECURITY;
 
 -- Owners can only see their own data
-CREATE POLICY IF NOT EXISTS "owner_onboarding" ON onboarding_flows
+DROP POLICY IF EXISTS "owner_onboarding" ON onboarding_flows;
+CREATE POLICY "owner_onboarding" ON onboarding_flows
     FOR ALL USING (owner_id::text = auth.uid()::text);
 
-CREATE POLICY IF NOT EXISTS "owner_nps" ON nps_responses
+DROP POLICY IF EXISTS "owner_nps" ON nps_responses;
+CREATE POLICY "owner_nps" ON nps_responses
     FOR ALL USING (owner_id::text = auth.uid()::text);
 
-CREATE POLICY IF NOT EXISTS "owner_transactions" ON transactions
+DROP POLICY IF EXISTS "owner_transactions" ON transactions;
+CREATE POLICY "owner_transactions" ON transactions
     FOR ALL USING (owner_id::text = auth.uid()::text);
 
-CREATE POLICY IF NOT EXISTS "owner_invoices" ON invoices
+DROP POLICY IF EXISTS "owner_invoices" ON invoices;
+CREATE POLICY "owner_invoices" ON invoices
     FOR ALL USING (owner_id::text = auth.uid()::text);
 
-CREATE POLICY IF NOT EXISTS "owner_portfolio" ON portfolio_holdings
+DROP POLICY IF EXISTS "owner_portfolio" ON portfolio_holdings;
+CREATE POLICY "owner_portfolio" ON portfolio_holdings
     FOR ALL USING (owner_id::text = auth.uid()::text);
 
-CREATE POLICY IF NOT EXISTS "owner_investment_memos" ON investment_memos
+DROP POLICY IF EXISTS "owner_investment_memos" ON investment_memos;
+CREATE POLICY "owner_investment_memos" ON investment_memos
     FOR ALL USING (owner_id::text = auth.uid()::text);
 
 -- Service role bypass (for backend)
-CREATE POLICY IF NOT EXISTS "service_onboarding" ON onboarding_flows
+DROP POLICY IF EXISTS "service_onboarding" ON onboarding_flows;
+CREATE POLICY "service_onboarding" ON onboarding_flows
     FOR ALL TO service_role USING (true);
 
-CREATE POLICY IF NOT EXISTS "service_nps" ON nps_responses
+DROP POLICY IF EXISTS "service_nps" ON nps_responses;
+CREATE POLICY "service_nps" ON nps_responses
     FOR ALL TO service_role USING (true);
 
-CREATE POLICY IF NOT EXISTS "service_transactions" ON transactions
+DROP POLICY IF EXISTS "service_transactions" ON transactions;
+CREATE POLICY "service_transactions" ON transactions
     FOR ALL TO service_role USING (true);
 
-CREATE POLICY IF NOT EXISTS "service_invoices" ON invoices
+DROP POLICY IF EXISTS "service_invoices" ON invoices;
+CREATE POLICY "service_invoices" ON invoices
     FOR ALL TO service_role USING (true);
 
-CREATE POLICY IF NOT EXISTS "service_portfolio" ON portfolio_holdings
+DROP POLICY IF EXISTS "service_portfolio" ON portfolio_holdings;
+CREATE POLICY "service_portfolio" ON portfolio_holdings
     FOR ALL TO service_role USING (true);
 
-CREATE POLICY IF NOT EXISTS "service_investment_memos" ON investment_memos
+DROP POLICY IF EXISTS "service_investment_memos" ON investment_memos;
+CREATE POLICY "service_investment_memos" ON investment_memos
     FOR ALL TO service_role USING (true);
 
 -- ============================================================
@@ -208,8 +221,8 @@ CREATE POLICY IF NOT EXISTS "service_investment_memos" ON investment_memos
 -- Platform health summary view
 CREATE OR REPLACE VIEW platform_health_summary AS
 SELECT
-    (SELECT COUNT(*) FROM owner_profiles)                                       AS total_owners,
-    (SELECT COUNT(*) FROM owner_profiles WHERE created_at > NOW() - INTERVAL '7 days') AS new_owners_7d,
+    (SELECT COUNT(*) FROM owners)                                       AS total_owners,
+    (SELECT COUNT(*) FROM owners WHERE created_at > NOW() - INTERVAL '7 days') AS new_owners_7d,
     (SELECT COUNT(*) FROM onboarding_flows WHERE completed_at IS NOT NULL)      AS completed_onboarding,
     (SELECT COUNT(*) FROM onboarding_flows WHERE completed_at IS NULL)          AS incomplete_onboarding,
     (SELECT ROUND(AVG(score), 1) FROM nps_responses WHERE status = 'responded') AS avg_nps_score,
@@ -221,7 +234,7 @@ SELECT
 -- Owner retention view (for Zara churn analysis)
 CREATE OR REPLACE VIEW owner_retention AS
 SELECT
-    op.owner_id,
+    op.id AS owner_id,
     op.created_at AS joined_at,
     MAX(al.created_at) AS last_activity,
     EXTRACT(DAY FROM NOW() - MAX(al.created_at)) AS days_since_active,
@@ -231,9 +244,9 @@ SELECT
         WHEN MAX(al.created_at) > NOW() - INTERVAL '30 days' THEN 'at_risk'
         ELSE 'churned'
     END AS retention_status
-FROM owner_profiles op
-LEFT JOIN activity_log al ON al.owner_id = op.owner_id::text
-GROUP BY op.owner_id, op.created_at;
+FROM owners op
+LEFT JOIN activity_log al ON al.owner_id::text = op.id::text
+GROUP BY op.id, op.created_at;
 
 -- ============================================================
 -- COMMENTS
