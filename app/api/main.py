@@ -63,6 +63,9 @@ from app.api.routes import integrations
 from app.api.routes import setup
 from app.api.routes import code_agent_protocol
 from app.api.routes import platform_scan as platform_scan_routes
+from app.api.routes import zara
+from app.api.routes import finn
+from app.api.routes import vest
 from app.database.connection import DatabaseConnectionError, SupabaseService
 from app.ui_shell import render_dashboard, render_home, render_login
 from app.runtime.preflight import build_preflight_report
@@ -171,6 +174,31 @@ async def lifespan(app: FastAPI):
     except Exception as _scan_err:
         logger.warning("Platform scanner startup skipped: %s", _scan_err)
 
+    # Schedule Zara weekly success review (Mondays at 8am UTC)
+    try:
+        from apscheduler.schedulers.background import BackgroundScheduler
+        from apscheduler.triggers.cron import CronTrigger
+        from agents.zara.zara_brain import ZaraBrain
+        _zara_scheduler = BackgroundScheduler()
+        _zara_brain = ZaraBrain()
+        _zara_scheduler.add_job(
+            _zara_brain.run_weekly_success_review,
+            CronTrigger(day_of_week="mon", hour=8, minute=0),
+            id="zara_weekly_review",
+            replace_existing=True,
+        )
+        _zara_scheduler.add_job(
+            _zara_brain.send_at_risk_check_ins,
+            CronTrigger(day_of_week="fri", hour=9, minute=0),
+            id="zara_weekly_check_ins",
+            replace_existing=True,
+        )
+        _zara_scheduler.start()
+        app.state.zara_scheduler = _zara_scheduler
+        logger.info("Zara weekly success review + at-risk check-in schedulers started")
+    except Exception as _zara_err:
+        logger.warning("Zara scheduler startup skipped: %s", _zara_err)
+
     try:
         yield
     finally:
@@ -181,6 +209,10 @@ async def lifespan(app: FastAPI):
         sage_active = getattr(app.state, "sage_monitor_scheduler", None)
         if sage_active:
             sage_active.stop()
+
+        zara_active = getattr(app.state, "zara_scheduler", None)
+        if zara_active:
+            zara_active.shutdown(wait=False)
 
 app = FastAPI(
     title=settings.app_name,
@@ -681,3 +713,6 @@ app.include_router(webhooks.router)
 app.include_router(dashboard_config.router)
 app.include_router(code_agent_protocol.router)
 app.include_router(platform_scan_routes.router)
+app.include_router(zara.router)
+app.include_router(finn.router)
+app.include_router(vest.router)

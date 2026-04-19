@@ -43,3 +43,10 @@ def send_resend_email(to_email: str, subject: str, html: str, from_email: str = 
             "skipped": True,
             "reason": f"Resend send failed: {exc}",
         }
+
+
+def send_email(to: str, subject: str, body: str, from_email: str = "ORB <onboarding@orb.local>") -> dict[str, Any]:
+    """Backward-compatible alias used by older modules expecting send_email()."""
+    # Keep plain-text callers working by wrapping body in a <pre> block.
+    html = f"<pre style='font-family: inherit; white-space: pre-wrap'>{body}</pre>"
+    return send_resend_email(to_email=to, subject=subject, html=html, from_email=from_email)
