@@ -5,6 +5,9 @@
 -- Run in: Supabase Dashboard → SQL Editor
 -- ============================================================
 
+-- Ensure UUID helpers exist for gen_random_uuid().
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
+
 -- ============================================================
 -- ZARA — Customer Success & Onboarding
 -- ============================================================
@@ -217,6 +220,10 @@ CREATE POLICY "service_investment_memos" ON investment_memos
 -- ============================================================
 -- PLATFORM VIEWS (for admin dashboard)
 -- ============================================================
+
+-- Compatibility hardening: older databases may have activity_log without owner_id.
+ALTER TABLE IF EXISTS activity_log
+    ADD COLUMN IF NOT EXISTS owner_id UUID;
 
 -- Platform health summary view
 CREATE OR REPLACE VIEW platform_health_summary AS
