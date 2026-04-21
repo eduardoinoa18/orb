@@ -190,6 +190,104 @@ CREATE INDEX IF NOT EXISTS idx_exec_events_success ON integration_execution_even
 CREATE INDEX IF NOT EXISTS idx_exec_events_tool ON integration_execution_events(tool_name);
 
 -- ============================================================
+-- PLATFORM WORKFLOW COMPATIBILITY (v4 fallback)
+-- ============================================================
+
+-- Some environments were bootstrapped before v4/v5; ensure core platform
+-- workflow tables exist so inbox/stats/task endpoints never 500.
+
+CREATE TABLE IF NOT EXISTS platform_requests (
+    id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    requester_id      UUID NOT NULL REFERENCES owners(id) ON DELETE CASCADE,
+    request_type      TEXT NOT NULL,
+    title             TEXT NOT NULL,
+    description       TEXT NOT NULL,
+    priority          TEXT DEFAULT 'normal',
+    context           JSONB DEFAULT '{}',
+    status            TEXT DEFAULT 'pending',
+    admin_notes       TEXT,
+    assigned_task_id  UUID,
+    handled_by_owner_id UUID REFERENCES owners(id),
+    response_message  TEXT,
+    responded_at      TIMESTAMPTZ,
+    created_at        TIMESTAMPTZ DEFAULT NOW(),
+    updated_at        TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_platform_requests_requester ON platform_requests(requester_id);
+CREATE INDEX IF NOT EXISTS idx_platform_requests_status ON platform_requests(status);
+CREATE INDEX IF NOT EXISTS idx_platform_requests_admin ON platform_requests(handled_by_owner_id);
+
+CREATE TABLE IF NOT EXISTS agent_messages (
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    from_owner_id   UUID NOT NULL REFERENCES owners(id) ON DELETE CASCADE,
+    to_owner_id     UUID NOT NULL REFERENCES owners(id) ON DELETE CASCADE,
+    from_agent_type TEXT DEFAULT 'commander',
+    to_agent_type   TEXT DEFAULT 'commander',
+    message_type    TEXT NOT NULL,
+    subject         TEXT,
+    body            TEXT NOT NULL,
+    payload         JSONB DEFAULT '{}',
+    thread_id       UUID,
+    reply_to_id     UUID REFERENCES agent_messages(id),
+    is_read         BOOLEAN DEFAULT FALSE,
+    read_at         TIMESTAMPTZ,
+    created_at      TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_agent_messages_to ON agent_messages(to_owner_id, is_read);
+CREATE INDEX IF NOT EXISTS idx_agent_messages_from ON agent_messages(from_owner_id);
+CREATE INDEX IF NOT EXISTS idx_agent_messages_thread ON agent_messages(thread_id);
+
+CREATE TABLE IF NOT EXISTS platform_tasks (
+    id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    owner_id         UUID NOT NULL REFERENCES owners(id) ON DELETE CASCADE,
+    title            TEXT NOT NULL,
+    description      TEXT NOT NULL,
+    task_type        TEXT NOT NULL DEFAULT 'other',
+    spec             JSONB NOT NULL DEFAULT '{}',
+    source_request_id UUID REFERENCES platform_requests(id),
+    priority         TEXT DEFAULT 'normal',
+    estimated_hours  FLOAT,
+    target_branch    TEXT DEFAULT 'main',
+    status           TEXT DEFAULT 'pending',
+    generated_code   TEXT,
+    affected_files   JSONB DEFAULT '[]',
+    diff_url         TEXT,
+    review_notes     TEXT,
+    reviewed_at      TIMESTAMPTZ,
+    deployed_at      TIMESTAMPTZ,
+    assigned_to      TEXT,
+    picked_up_at     TIMESTAMPTZ,
+    last_agent_activity TIMESTAMPTZ,
+    agent_progress   INTEGER DEFAULT 0,
+    created_at       TIMESTAMPTZ DEFAULT NOW(),
+    updated_at       TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_platform_tasks_status ON platform_tasks(status);
+CREATE INDEX IF NOT EXISTS idx_platform_tasks_owner ON platform_tasks(owner_id);
+CREATE INDEX IF NOT EXISTS idx_platform_tasks_priority ON platform_tasks(priority, status);
+
+CREATE OR REPLACE FUNCTION update_platform_updated_at_column()
+RETURNS TRIGGER AS $$
+BEGIN
+    NEW.updated_at = NOW();
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_platform_requests_updated_at ON platform_requests;
+CREATE TRIGGER trg_platform_requests_updated_at
+    BEFORE UPDATE ON platform_requests
+    FOR EACH ROW EXECUTE FUNCTION update_platform_updated_at_column();
+
+DROP TRIGGER IF EXISTS trg_platform_tasks_updated_at ON platform_tasks;
+CREATE TRIGGER trg_platform_tasks_updated_at
+    BEFORE UPDATE ON platform_tasks
+    FOR EACH ROW EXECUTE FUNCTION update_platform_updated_at_column();
+
+-- ============================================================
 -- AGENT SKILLS — Extend for new agents
 -- ============================================================
 
@@ -209,6 +307,9 @@ ALTER TABLE invoices              ENABLE ROW LEVEL SECURITY;
 ALTER TABLE portfolio_holdings    ENABLE ROW LEVEL SECURITY;
 ALTER TABLE investment_memos      ENABLE ROW LEVEL SECURITY;
 ALTER TABLE integration_execution_events ENABLE ROW LEVEL SECURITY;
+ALTER TABLE platform_requests     ENABLE ROW LEVEL SECURITY;
+ALTER TABLE agent_messages        ENABLE ROW LEVEL SECURITY;
+ALTER TABLE platform_tasks        ENABLE ROW LEVEL SECURITY;
 
 -- Owners can only see their own data
 DROP POLICY IF EXISTS "owner_onboarding" ON onboarding_flows;
@@ -239,6 +340,18 @@ DROP POLICY IF EXISTS "owner_exec_events" ON integration_execution_events;
 CREATE POLICY "owner_exec_events" ON integration_execution_events
     FOR ALL USING (owner_id::text = auth.uid()::text);
 
+DROP POLICY IF EXISTS "owner_platform_requests" ON platform_requests;
+CREATE POLICY "owner_platform_requests" ON platform_requests
+    FOR ALL USING (requester_id::text = auth.uid()::text OR handled_by_owner_id::text = auth.uid()::text);
+
+DROP POLICY IF EXISTS "owner_agent_messages" ON agent_messages;
+CREATE POLICY "owner_agent_messages" ON agent_messages
+    FOR ALL USING (to_owner_id::text = auth.uid()::text OR from_owner_id::text = auth.uid()::text);
+
+DROP POLICY IF EXISTS "owner_platform_tasks" ON platform_tasks;
+CREATE POLICY "owner_platform_tasks" ON platform_tasks
+    FOR ALL USING (owner_id::text = auth.uid()::text);
+
 -- Service role bypass (for backend)
 DROP POLICY IF EXISTS "service_onboarding" ON onboarding_flows;
 CREATE POLICY "service_onboarding" ON onboarding_flows
@@ -266,6 +379,18 @@ CREATE POLICY "service_investment_memos" ON investment_memos
 
 DROP POLICY IF EXISTS "service_exec_events" ON integration_execution_events;
 CREATE POLICY "service_exec_events" ON integration_execution_events
+    FOR ALL TO service_role USING (true);
+
+DROP POLICY IF EXISTS "service_platform_requests" ON platform_requests;
+CREATE POLICY "service_platform_requests" ON platform_requests
+    FOR ALL TO service_role USING (true);
+
+DROP POLICY IF EXISTS "service_agent_messages" ON agent_messages;
+CREATE POLICY "service_agent_messages" ON agent_messages
+    FOR ALL TO service_role USING (true);
+
+DROP POLICY IF EXISTS "service_platform_tasks" ON platform_tasks;
+CREATE POLICY "service_platform_tasks" ON platform_tasks
     FOR ALL TO service_role USING (true);
 
 -- ============================================================
