@@ -94,6 +94,14 @@ Invoke-RestMethod -Method Get -Uri "http://localhost:8000/setup/preflight"
 
 This returns a readiness score with blockers and warnings (schema + key quality).
 
+To view the platform core-values scorecard (simplicity, reliability, owner control, learning velocity):
+
+```powershell
+Invoke-RestMethod -Method Get -Uri "http://localhost:8000/setup/core-values"
+```
+
+Use this to track whether the platform is getting simpler and better over time.
+
 You can also run preflight directly from CLI (works before API startup):
 
 ```powershell

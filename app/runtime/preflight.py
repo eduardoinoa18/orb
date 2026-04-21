@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from app.database.schema_readiness import schema_readiness_payload
+from app.runtime.core_values import evaluate_preflight_core_values
 from config.settings import get_settings
 
 
@@ -82,7 +83,7 @@ def build_preflight_report() -> dict[str, Any]:
 
     score = max(0, 100 - len(blockers) * 25 - len(warnings) * 7)
 
-    return {
+    report = {
         "ready": len(blockers) == 0,
         "score": score,
         "blockers": blockers,
@@ -93,3 +94,5 @@ def build_preflight_report() -> dict[str, Any]:
             "warning_count": len(warnings),
         },
     }
+    report["core_values"] = evaluate_preflight_core_values(report)
+    return report

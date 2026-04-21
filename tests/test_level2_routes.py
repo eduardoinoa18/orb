@@ -134,3 +134,12 @@ class TestDatabaseEndpoint:
         response = client.get("/setup/schema-readiness")
         # 200 or 503 both valid — route must exist
         assert response.status_code in (200, 503)
+
+    def test_setup_core_values_endpoint_returns_scorecard(self) -> None:
+        """Setup core-values endpoint should expose simple improvement guidance."""
+        response = client.get("/setup/core-values")
+        assert response.status_code == 200
+        body = response.json()
+        assert isinstance(body.get("overall"), int)
+        assert isinstance(body.get("scores"), dict)
+        assert isinstance(body.get("recommendations"), list)

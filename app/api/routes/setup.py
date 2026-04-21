@@ -115,6 +115,21 @@ def setup_preflight() -> dict[str, Any]:
     return build_preflight_report()
 
 
+@router.get("/core-values")
+def setup_core_values() -> dict[str, Any]:
+    """Return simplified core-values scorecard and recommendations for operators."""
+    report = build_preflight_report()
+    return {
+        "north_star": report.get("core_values", {}).get("north_star"),
+        "overall": report.get("core_values", {}).get("overall"),
+        "scores": report.get("core_values", {}).get("scores", {}),
+        "recommendations": report.get("core_values", {}).get("recommendations", []),
+        "signals": report.get("core_values", {}).get("signals", {}),
+        "preflight_ready": report.get("ready", False),
+        "preflight_score": report.get("score", 0),
+    }
+
+
 @router.post("/save-key")
 def save_key(payload: SaveKeyRequest) -> dict[str, Any]:
     """Encrypt and save an API key to the platform settings store.

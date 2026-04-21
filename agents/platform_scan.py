@@ -28,6 +28,8 @@ import os
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+from app.runtime.core_values import evaluate_scan_core_values
+
 logger = logging.getLogger("orb.platform_scan")
 
 
@@ -283,6 +285,7 @@ class PlatformScanner:
 
         scan_result["urgency_score"] = urgency
         scan_result["needs_attention"] = urgency > 0
+        scan_result["core_values"] = evaluate_scan_core_values(scan_result)
 
         logger.info(
             "Platform scan complete — urgency=%d needs_attention=%s",
@@ -294,6 +297,13 @@ class PlatformScanner:
         """Converts a scan result into a readable digest message for Eduardo."""
         now = datetime.now(timezone.utc).strftime("%b %d %I:%M %p UTC")
         lines = [f"🔍 ORB Platform Scan — {now}"]
+
+        core_values = scan.get("core_values") or {}
+        overall = core_values.get("overall")
+        if isinstance(overall, int):
+            lines.append(f"\n🎯 Core Values Score: {overall}/100")
+            for recommendation in (core_values.get("recommendations") or [])[:2]:
+                lines.append(f"  • {recommendation}")
 
         # Requests
         req = scan.get("requests", {})

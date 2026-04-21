@@ -23,6 +23,9 @@ def test_preflight_report_ready_when_schema_and_critical_values_are_good() -> No
     assert report["ready"] is True
     assert report["summary"]["blocker_count"] == 0
     assert report["score"] == 100
+    assert "core_values" in report
+    assert "overall" in report["core_values"]
+    assert "scores" in report["core_values"]
 
 
 def test_preflight_report_includes_schema_blocker_when_not_ready() -> None:
@@ -44,3 +47,4 @@ def test_preflight_report_includes_schema_blocker_when_not_ready() -> None:
     assert report["ready"] is False
     assert report["summary"]["blocker_count"] >= 1
     assert any(item.get("code") == "schema_not_ready" for item in report["blockers"])
+    assert report["core_values"]["overall"] < 100
