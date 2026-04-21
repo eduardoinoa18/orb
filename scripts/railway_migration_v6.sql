@@ -148,6 +148,48 @@ CREATE INDEX IF NOT EXISTS idx_investment_memos_owner ON investment_memos(owner_
 CREATE INDEX IF NOT EXISTS idx_investment_memos_ticker ON investment_memos(ticker);
 
 -- ============================================================
+-- IDENTITY + EXECUTION HARDENING
+-- ============================================================
+
+-- Ensure agent identity fields needed for real-world execution are present.
+ALTER TABLE IF EXISTS agents
+    ADD COLUMN IF NOT EXISTS email_address TEXT,
+    ADD COLUMN IF NOT EXISTS phone_number TEXT,
+    ADD COLUMN IF NOT EXISTS agent_type TEXT,
+    ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'active';
+
+-- Owner-scoped uniqueness for identity channels.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_agents_owner_email_unique
+    ON agents(owner_id, lower(email_address))
+    WHERE email_address IS NOT NULL;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_agents_owner_phone_unique
+    ON agents(owner_id, phone_number)
+    WHERE phone_number IS NOT NULL;
+
+-- Audit log for real external executions performed by agents.
+CREATE TABLE IF NOT EXISTS integration_execution_events (
+    id                  UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+    owner_id            UUID NOT NULL REFERENCES owners(id) ON DELETE CASCADE,
+    agent_id            UUID REFERENCES agents(id) ON DELETE SET NULL,
+    agent_slug          TEXT NOT NULL,
+    tool_name           TEXT NOT NULL,
+    integration_slug    TEXT NOT NULL,
+    action_type         TEXT NOT NULL DEFAULT 'execute'
+                        CHECK (action_type IN ('execute', 'simulate', 'approval_requested', 'approval_denied')),
+    success             BOOLEAN NOT NULL DEFAULT FALSE,
+    latency_ms          INTEGER,
+    error_message       TEXT,
+    request_payload     JSONB DEFAULT '{}',
+    response_payload    JSONB DEFAULT '{}',
+    created_at          TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_exec_events_owner_created ON integration_execution_events(owner_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_exec_events_success ON integration_execution_events(success);
+CREATE INDEX IF NOT EXISTS idx_exec_events_tool ON integration_execution_events(tool_name);
+
+-- ============================================================
 -- AGENT SKILLS — Extend for new agents
 -- ============================================================
 
@@ -166,6 +208,7 @@ ALTER TABLE transactions          ENABLE ROW LEVEL SECURITY;
 ALTER TABLE invoices              ENABLE ROW LEVEL SECURITY;
 ALTER TABLE portfolio_holdings    ENABLE ROW LEVEL SECURITY;
 ALTER TABLE investment_memos      ENABLE ROW LEVEL SECURITY;
+ALTER TABLE integration_execution_events ENABLE ROW LEVEL SECURITY;
 
 -- Owners can only see their own data
 DROP POLICY IF EXISTS "owner_onboarding" ON onboarding_flows;
@@ -192,6 +235,10 @@ DROP POLICY IF EXISTS "owner_investment_memos" ON investment_memos;
 CREATE POLICY "owner_investment_memos" ON investment_memos
     FOR ALL USING (owner_id::text = auth.uid()::text);
 
+DROP POLICY IF EXISTS "owner_exec_events" ON integration_execution_events;
+CREATE POLICY "owner_exec_events" ON integration_execution_events
+    FOR ALL USING (owner_id::text = auth.uid()::text);
+
 -- Service role bypass (for backend)
 DROP POLICY IF EXISTS "service_onboarding" ON onboarding_flows;
 CREATE POLICY "service_onboarding" ON onboarding_flows
@@ -215,6 +262,10 @@ CREATE POLICY "service_portfolio" ON portfolio_holdings
 
 DROP POLICY IF EXISTS "service_investment_memos" ON investment_memos;
 CREATE POLICY "service_investment_memos" ON investment_memos
+    FOR ALL TO service_role USING (true);
+
+DROP POLICY IF EXISTS "service_exec_events" ON integration_execution_events;
+CREATE POLICY "service_exec_events" ON integration_execution_events
     FOR ALL TO service_role USING (true);
 
 -- ============================================================
@@ -255,6 +306,33 @@ FROM owners op
 LEFT JOIN activity_log al ON al.owner_id::text = op.id::text
 GROUP BY op.id, op.created_at;
 
+-- Owner execution readiness view (identity + real action quality)
+CREATE OR REPLACE VIEW owner_execution_readiness AS
+SELECT
+        op.id AS owner_id,
+        CASE WHEN op.email IS NULL OR op.email = '' THEN false ELSE true END AS owner_email_present,
+        CASE WHEN op.phone IS NULL OR op.phone = '' THEN false ELSE true END AS owner_phone_present,
+        (SELECT COUNT(*) FROM agents a WHERE a.owner_id = op.id AND COALESCE(a.is_active, true) = true AND COALESCE(a.status, 'active') <> 'deprovisioned') AS active_agents,
+        (SELECT COUNT(*) FROM agents a
+            WHERE a.owner_id = op.id
+                AND COALESCE(a.is_active, true) = true
+                AND COALESCE(a.status, 'active') <> 'deprovisioned'
+                AND (
+                        a.name IS NULL OR a.name = '' OR
+                        a.agent_type IS NULL OR a.agent_type = '' OR
+                        a.email_address IS NULL OR a.email_address = '' OR
+                        a.phone_number IS NULL OR a.phone_number = ''
+                )) AS active_agents_missing_identity,
+        (SELECT COUNT(*) FROM owner_integrations oi WHERE oi.owner_id = op.id AND oi.status = 'connected') AS connected_integrations,
+        (SELECT COUNT(*) FROM integration_execution_events ie WHERE ie.owner_id = op.id) AS execution_attempts,
+        (SELECT COUNT(*) FROM integration_execution_events ie WHERE ie.owner_id = op.id AND ie.success = true) AS successful_executions,
+        (SELECT ROUND(100.0 * AVG(CASE WHEN ie.success THEN 1 ELSE 0 END), 1)
+                FROM integration_execution_events ie
+                WHERE ie.owner_id = op.id
+                    AND ie.created_at > NOW() - INTERVAL '30 days') AS success_rate_30d,
+        NOW() AS computed_at
+FROM owners op;
+
 -- ============================================================
 -- COMMENTS
 -- ============================================================
@@ -265,6 +343,7 @@ COMMENT ON TABLE transactions IS 'Finn: financial transaction ledger (income & e
 COMMENT ON TABLE invoices IS 'Finn: invoice lifecycle management';
 COMMENT ON TABLE portfolio_holdings IS 'Vest: investment portfolio positions per owner';
 COMMENT ON TABLE investment_memos IS 'Vest: AI-written investment research memos';
+COMMENT ON TABLE integration_execution_events IS 'Cross-agent audit of real external actions executed via integrations';
 
 -- ============================================================
 -- DONE

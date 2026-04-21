@@ -102,6 +102,14 @@ Invoke-RestMethod -Method Get -Uri "http://localhost:8000/setup/core-values"
 
 Use this to track whether the platform is getting simpler and better over time.
 
+To verify an owner workspace is ready for real agent execution (identity + integrations + executable tools):
+
+```powershell
+Invoke-RestMethod -Method Get -Uri "http://localhost:8000/setup/execution-readiness/<owner_id>"
+```
+
+Use this before production onboarding to confirm agents can execute outbound actions, not only generate suggestions.
+
 You can also run preflight directly from CLI (works before API startup):
 
 ```powershell

@@ -20,6 +20,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 from app.database.settings_store import SettingsStore
 from app.database.schema_readiness import schema_readiness_payload
+from app.runtime.execution_readiness import owner_execution_readiness
 from app.runtime.preflight import build_preflight_report
 
 logger = logging.getLogger("orb.setup")
@@ -127,6 +128,22 @@ def setup_core_values() -> dict[str, Any]:
         "signals": report.get("core_values", {}).get("signals", {}),
         "preflight_ready": report.get("ready", False),
         "preflight_score": report.get("score", 0),
+    }
+
+
+@router.get("/execution-readiness/{owner_id}")
+def setup_execution_readiness(owner_id: str) -> dict[str, Any]:
+    """Return owner-specific readiness for real-world agent execution."""
+    readiness = owner_execution_readiness(owner_id=owner_id)
+    return {
+        "owner_id": owner_id,
+        "ready": readiness.get("ready", False),
+        "score": readiness.get("score", 0),
+        "identity": readiness.get("identity", {}),
+        "integrations": readiness.get("integrations", {}),
+        "tool_execution": readiness.get("tool_execution", {}),
+        "blockers": readiness.get("blockers", []),
+        "warnings": readiness.get("warnings", []),
     }
 
 

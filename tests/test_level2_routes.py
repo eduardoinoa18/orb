@@ -143,3 +143,14 @@ class TestDatabaseEndpoint:
         assert isinstance(body.get("overall"), int)
         assert isinstance(body.get("scores"), dict)
         assert isinstance(body.get("recommendations"), list)
+
+    def test_setup_execution_readiness_endpoint_returns_payload(self) -> None:
+        """Execution-readiness endpoint should return identity/integration/tool execution status."""
+        response = client.get("/setup/execution-readiness/owner-1")
+        assert response.status_code == 200
+        body = response.json()
+        assert "owner_id" in body
+        assert "ready" in body
+        assert "identity" in body
+        assert "integrations" in body
+        assert "tool_execution" in body

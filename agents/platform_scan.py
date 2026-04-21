@@ -29,6 +29,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from app.runtime.core_values import evaluate_scan_core_values
+from app.runtime.execution_readiness import owner_execution_readiness
 
 logger = logging.getLogger("orb.platform_scan")
 
@@ -268,6 +269,7 @@ class PlatformScanner:
             "agent_activity": self.scan_agent_activity(),
             "platform_stats": self.scan_platform_stats(),
             "unread_messages": self.scan_unread_messages(admin_id) if admin_id else {"total": 0, "items": []},
+            "execution_readiness": owner_execution_readiness(admin_id) if admin_id else {"ready": False, "score": 0},
         }
 
         # Build urgency score
@@ -282,6 +284,8 @@ class PlatformScanner:
             urgency += 5
         if scan_result["unread_messages"]["total"] > 0:
             urgency += scan_result["unread_messages"]["total"]
+        if not bool((scan_result.get("execution_readiness") or {}).get("ready")):
+            urgency += 3
 
         scan_result["urgency_score"] = urgency
         scan_result["needs_attention"] = urgency > 0
@@ -335,6 +339,16 @@ class PlatformScanner:
         elif integrations.get("missing_optional"):
             optional = integrations.get("missing_optional", [])
             lines.append(f"\n🟡 Optional Integrations Not Configured: {', '.join(optional)}")
+
+        execution = scan.get("execution_readiness", {})
+        if execution:
+            lines.append(
+                f"\n⚙️ Execution Readiness: {execution.get('score', 0)}/100"
+                + (" ✅" if execution.get("ready") else " ⚠")
+            )
+            blockers = execution.get("blockers") or []
+            for block in blockers[:2]:
+                lines.append(f"  • {block.get('message', 'Execution readiness blocker')}" )
 
         # Stats
         stats = scan.get("platform_stats", {})
