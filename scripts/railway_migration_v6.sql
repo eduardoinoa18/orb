@@ -312,9 +312,9 @@ SELECT
         op.id AS owner_id,
         CASE WHEN op.email IS NULL OR op.email = '' THEN false ELSE true END AS owner_email_present,
         CASE WHEN op.phone IS NULL OR op.phone = '' THEN false ELSE true END AS owner_phone_present,
-        (SELECT COUNT(*) FROM agents a WHERE a.owner_id = op.id AND COALESCE(a.is_active, true) = true AND COALESCE(a.status, 'active') <> 'deprovisioned') AS active_agents,
+    (SELECT COUNT(*) FROM agents a WHERE a.owner_id::text = op.id::text AND COALESCE(a.is_active, true) = true AND COALESCE(a.status, 'active') <> 'deprovisioned') AS active_agents,
         (SELECT COUNT(*) FROM agents a
-            WHERE a.owner_id = op.id
+        WHERE a.owner_id::text = op.id::text
                 AND COALESCE(a.is_active, true) = true
                 AND COALESCE(a.status, 'active') <> 'deprovisioned'
                 AND (
@@ -323,12 +323,12 @@ SELECT
                         a.email_address IS NULL OR a.email_address = '' OR
                         a.phone_number IS NULL OR a.phone_number = ''
                 )) AS active_agents_missing_identity,
-        (SELECT COUNT(*) FROM owner_integrations oi WHERE oi.owner_id = op.id AND oi.status = 'connected') AS connected_integrations,
-        (SELECT COUNT(*) FROM integration_execution_events ie WHERE ie.owner_id = op.id) AS execution_attempts,
-        (SELECT COUNT(*) FROM integration_execution_events ie WHERE ie.owner_id = op.id AND ie.success = true) AS successful_executions,
+    (SELECT COUNT(*) FROM owner_integrations oi WHERE oi.owner_id::text = op.id::text AND oi.status = 'connected') AS connected_integrations,
+    (SELECT COUNT(*) FROM integration_execution_events ie WHERE ie.owner_id::text = op.id::text) AS execution_attempts,
+    (SELECT COUNT(*) FROM integration_execution_events ie WHERE ie.owner_id::text = op.id::text AND ie.success = true) AS successful_executions,
         (SELECT ROUND(100.0 * AVG(CASE WHEN ie.success THEN 1 ELSE 0 END), 1)
                 FROM integration_execution_events ie
-                WHERE ie.owner_id = op.id
+        WHERE ie.owner_id::text = op.id::text
                     AND ie.created_at > NOW() - INTERVAL '30 days') AS success_rate_30d,
         NOW() AS computed_at
 FROM owners op;
